@@ -1,5 +1,36 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { ProofAgeClient } from './client.js';
 import { ProofAgeError } from './errors.js';
+
+function loadEnvFile(filePath: string): void {
+  let content: string;
+  try {
+    content = readFileSync(filePath, 'utf-8');
+  } catch {
+    return;
+  }
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    let val = trimmed.slice(eqIdx + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (!process.env[key]) {
+      process.env[key] = val;
+    }
+  }
+}
+
+function loadDotenvFiles(): void {
+  const cwd = process.cwd();
+  loadEnvFile(resolve(cwd, '.env.local'));
+  loadEnvFile(resolve(cwd, '.env'));
+}
 
 const RESET = '\x1b[0m';
 const GREEN = '\x1b[32m';
@@ -138,6 +169,8 @@ Options:
 }
 
 async function main(): Promise<void> {
+  loadDotenvFiles();
+
   const args = process.argv.slice(2);
   const command = args.find((a) => !a.startsWith('--'));
   const flags = parseArgs(args);
