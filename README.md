@@ -1,6 +1,6 @@
 # @proofage/node
 
-Node.js client for the [ProofAge](https://proofage.xyz) API with **HMAC request signing** and **webhook signature verification**. Mirrors the behavior of [`proofage/laravel-client`](https://github.com/proofage/proofage-laravel-client).
+Node.js client for the [ProofAge](https://proofage.xyz) API with **HMAC request signing** and **webhook signature verification**.
 
 ## Requirements
 
@@ -14,7 +14,7 @@ npm install @proofage/node
 
 ## Quick Start
 
-Set your environment variables (same names as the Laravel package):
+Set your environment variables:
 
 ```bash
 PROOFAGE_API_KEY=pk_live_...
