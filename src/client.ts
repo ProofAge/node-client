@@ -11,27 +11,51 @@ import type { ProofAgeConfig } from './types.js';
 const DEFAULT_BASE_URL = 'https://api.proofage.xyz';
 const DEFAULT_VERSION = 'v1';
 
+function envStr(key: string): string | undefined {
+  return typeof process !== 'undefined' ? process.env[key] : undefined;
+}
+
+function envInt(key: string): number | undefined {
+  const v = envStr(key);
+  if (v === undefined || v === '') return undefined;
+  const n = Number.parseInt(v, 10);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 export class ProofAgeClient {
   private readonly config: Required<
     Pick<ProofAgeConfig, 'apiKey' | 'secretKey' | 'baseUrl' | 'version' | 'timeout' | 'retryAttempts' | 'retryDelay'>
   >;
 
-  constructor(config: ProofAgeConfig) {
-    if (!config.apiKey) {
-      throw new ProofAgeError('API key is required', 0);
+  /**
+   * Create a client configured entirely from environment variables.
+   * Uses the same env names as the Laravel package (config/proofage.php):
+   *   PROOFAGE_API_KEY, PROOFAGE_SECRET_KEY, PROOFAGE_BASE_URL,
+   *   PROOFAGE_VERSION, PROOFAGE_TIMEOUT, PROOFAGE_RETRY_ATTEMPTS, PROOFAGE_RETRY_DELAY
+   */
+  static fromEnv(overrides: Partial<ProofAgeConfig> = {}): ProofAgeClient {
+    return new ProofAgeClient(overrides);
+  }
+
+  constructor(config: ProofAgeConfig = {}) {
+    const apiKey = config.apiKey ?? envStr('PROOFAGE_API_KEY');
+    const secretKey = config.secretKey ?? envStr('PROOFAGE_SECRET_KEY');
+
+    if (!apiKey) {
+      throw new ProofAgeError('API key is required — set PROOFAGE_API_KEY or pass apiKey', 0);
     }
-    if (!config.secretKey) {
-      throw new ProofAgeError('Secret key is required', 0);
+    if (!secretKey) {
+      throw new ProofAgeError('Secret key is required — set PROOFAGE_SECRET_KEY or pass secretKey', 0);
     }
 
     this.config = {
-      apiKey: config.apiKey,
-      secretKey: config.secretKey,
-      baseUrl: (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, ''),
-      version: config.version ?? DEFAULT_VERSION,
-      timeout: config.timeout ?? 30_000,
-      retryAttempts: config.retryAttempts ?? 3,
-      retryDelay: config.retryDelay ?? 1000,
+      apiKey,
+      secretKey,
+      baseUrl: (config.baseUrl ?? envStr('PROOFAGE_BASE_URL') ?? DEFAULT_BASE_URL).replace(/\/$/, ''),
+      version: config.version ?? envStr('PROOFAGE_VERSION') ?? DEFAULT_VERSION,
+      timeout: config.timeout ?? envInt('PROOFAGE_TIMEOUT') ?? 30_000,
+      retryAttempts: config.retryAttempts ?? envInt('PROOFAGE_RETRY_ATTEMPTS') ?? 3,
+      retryDelay: config.retryDelay ?? envInt('PROOFAGE_RETRY_DELAY') ?? 1000,
     };
   }
 

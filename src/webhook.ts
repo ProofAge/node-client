@@ -1,5 +1,17 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { WebhookVerificationError, type WebhookVerificationErrorCode } from './errors.js';
+import type { WebhookPayload } from './types.js';
+
+function envStr(key: string): string | undefined {
+  return typeof process !== 'undefined' ? process.env[key] : undefined;
+}
+
+function envInt(key: string): number | undefined {
+  const v = envStr(key);
+  if (v === undefined || v === '') return undefined;
+  const n = Number.parseInt(v, 10);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 export interface VerifyWebhookSignatureInput {
   /** Raw request body string (must match bytes ProofAge signed). */
@@ -7,8 +19,11 @@ export interface VerifyWebhookSignatureInput {
   signature: string | null | undefined;
   timestamp: string | number | null | undefined;
   authClient: string | null | undefined;
-  secretKey: string | undefined;
-  apiKey: string | undefined;
+  /** Falls back to PROOFAGE_SECRET_KEY env var. */
+  secretKey?: string | undefined;
+  /** Falls back to PROOFAGE_API_KEY env var. */
+  apiKey?: string | undefined;
+  /** Seconds. Falls back to PROOFAGE_WEBHOOK_TOLERANCE env var, then 300. */
   tolerance?: number;
 }
 
@@ -18,7 +33,7 @@ function throwErr(code: WebhookVerificationErrorCode, message: string, status = 
 
 /**
  * Verify ProofAge webhook HMAC (same algorithm as Laravel `WebhookSignatureVerifier` + middleware checks).
- * Use the raw body as received (e.g. `await request.text()` in Next.js).
+ * Keys and tolerance resolve from process.env when not provided — same env names as Laravel package.
  */
 export function verifyWebhookSignature(input: VerifyWebhookSignatureInput): void {
   const {
@@ -26,10 +41,11 @@ export function verifyWebhookSignature(input: VerifyWebhookSignatureInput): void
     signature,
     timestamp,
     authClient,
-    secretKey,
-    apiKey,
-    tolerance = 300,
   } = input;
+
+  const secretKey = input.secretKey ?? envStr('PROOFAGE_SECRET_KEY');
+  const apiKey = input.apiKey ?? envStr('PROOFAGE_API_KEY');
+  const tolerance = input.tolerance ?? envInt('PROOFAGE_WEBHOOK_TOLERANCE') ?? 300;
 
   if (!signature) {
     throwErr('MISSING_SIGNATURE', 'X-HMAC-Signature header is required');
@@ -41,7 +57,7 @@ export function verifyWebhookSignature(input: VerifyWebhookSignatureInput): void
     throwErr('MISSING_AUTH_CLIENT', 'X-Auth-Client header is required');
   }
   if (!secretKey || !apiKey) {
-    throwErr('CONFIGURATION_ERROR', 'Webhook verification requires apiKey and secretKey', 418);
+    throwErr('CONFIGURATION_ERROR', 'Webhook verification requires apiKey and secretKey (set PROOFAGE_API_KEY / PROOFAGE_SECRET_KEY)', 418);
   }
 
   if (authClient !== apiKey) {
@@ -67,6 +83,85 @@ export function verifyWebhookSignature(input: VerifyWebhookSignatureInput): void
   if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
     throwErr('INVALID_SIGNATURE', 'HMAC signature is invalid');
   }
+}
+
+export interface HandleWebhookOptions {
+  /** Falls back to PROOFAGE_SECRET_KEY env var. */
+  secretKey?: string;
+  /** Falls back to PROOFAGE_API_KEY env var. */
+  apiKey?: string;
+  /** Seconds. Falls back to PROOFAGE_WEBHOOK_TOLERANCE env var, then 300. */
+  tolerance?: number;
+}
+
+export interface HandleWebhookResult {
+  verified: boolean;
+  payload: WebhookPayload | null;
+  error: string | null;
+}
+
+/**
+ * High-level webhook handler: verify HMAC + parse payload in one call.
+ * Works with any framework that gives you a standard `Request` object (Next.js, Hono, Cloudflare Workers, etc.).
+ *
+ * Returns a `HandleWebhookResult` — check `verified` before processing.
+ * For a "middleware-like" approach that returns a `Response` directly, use `webhookHandler()`.
+ */
+export async function handleWebhook(request: Request, options: HandleWebhookOptions = {}): Promise<HandleWebhookResult> {
+  const rawBody = await request.text();
+
+  try {
+    verifyWebhookSignature({
+      rawBody,
+      signature: request.headers.get('x-hmac-signature'),
+      timestamp: request.headers.get('x-timestamp'),
+      authClient: request.headers.get('x-auth-client'),
+      secretKey: options.secretKey,
+      apiKey: options.apiKey,
+      tolerance: options.tolerance,
+    });
+  } catch (e) {
+    const reason = e instanceof WebhookVerificationError ? `${e.code}: ${e.message}` : 'verification failed';
+    return { verified: false, payload: null, error: reason };
+  }
+
+  try {
+    const payload = rawBody ? (JSON.parse(rawBody) as WebhookPayload) : null;
+    return { verified: true, payload, error: null };
+  } catch {
+    return { verified: false, payload: null, error: 'Invalid JSON body' };
+  }
+}
+
+/**
+ * Drop-in webhook route handler. Verifies HMAC, parses payload, calls your callback, returns a Response.
+ * If verification fails, returns 401. If your callback throws, returns 500.
+ *
+ * @example
+ * // Next.js App Router — entire route in one line:
+ * export const POST = webhookHandler(async (payload) => {
+ *   console.log('Verified:', payload.verification_id, payload.status);
+ * });
+ */
+export function webhookHandler(
+  onVerified: (payload: WebhookPayload) => void | Promise<void>,
+  options: HandleWebhookOptions = {},
+): (request: Request) => Promise<Response> {
+  return async (request: Request): Promise<Response> => {
+    const result = await handleWebhook(request, options);
+
+    if (!result.verified || !result.payload) {
+      return new Response(null, { status: result.error === 'Invalid JSON body' ? 400 : 401 });
+    }
+
+    try {
+      await onVerified(result.payload);
+    } catch {
+      return new Response(null, { status: 500 });
+    }
+
+    return new Response(null, { status: 200 });
+  };
 }
 
 /**

@@ -15,8 +15,8 @@ export {
   serializeJsonBody,
   sha256Hex,
 } from './hmac.js';
-export { generateWebhookSignature, verifyWebhookSignature } from './webhook.js';
-export type { VerifyWebhookSignatureInput } from './webhook.js';
+export { generateWebhookSignature, handleWebhook, verifyWebhookSignature, webhookHandler } from './webhook.js';
+export type { HandleWebhookOptions, HandleWebhookResult, VerifyWebhookSignatureInput } from './webhook.js';
 export { VerificationResource } from './resources/verifications.js';
 export { WorkspaceResource } from './resources/workspace.js';
 export type {

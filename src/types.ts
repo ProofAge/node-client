@@ -1,9 +1,10 @@
 /**
  * ProofAge API client configuration.
+ * All fields are optional when using `ProofAgeClient.fromEnv()` — they resolve from process.env.
  */
 export interface ProofAgeConfig {
-  apiKey: string;
-  secretKey: string;
+  apiKey?: string;
+  secretKey?: string;
   baseUrl?: string;
   version?: string;
   timeout?: number;

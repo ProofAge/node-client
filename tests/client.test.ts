@@ -35,6 +35,54 @@ describe('ProofAgeClient', () => {
     expect(() => new ProofAgeClient({ ...baseConfig, secretKey: '' })).toThrow('Secret key is required');
   });
 
+  it('resolves config from process.env', () => {
+    process.env.PROOFAGE_API_KEY = 'pk_env';
+    process.env.PROOFAGE_SECRET_KEY = 'sk_env';
+    process.env.PROOFAGE_BASE_URL = 'https://env.example.com';
+
+    try {
+      const client = new ProofAgeClient();
+      const cfg = client.getConfig();
+      expect(cfg.apiKey).toBe('pk_env');
+      expect(cfg.secretKey).toBe('sk_env');
+      expect(cfg.baseUrl).toBe('https://env.example.com');
+    } finally {
+      delete process.env.PROOFAGE_API_KEY;
+      delete process.env.PROOFAGE_SECRET_KEY;
+      delete process.env.PROOFAGE_BASE_URL;
+    }
+  });
+
+  it('fromEnv() creates client from env with overrides', () => {
+    process.env.PROOFAGE_API_KEY = 'pk_env';
+    process.env.PROOFAGE_SECRET_KEY = 'sk_env';
+
+    try {
+      const client = ProofAgeClient.fromEnv({ baseUrl: 'https://override.com' });
+      const cfg = client.getConfig();
+      expect(cfg.apiKey).toBe('pk_env');
+      expect(cfg.baseUrl).toBe('https://override.com');
+    } finally {
+      delete process.env.PROOFAGE_API_KEY;
+      delete process.env.PROOFAGE_SECRET_KEY;
+    }
+  });
+
+  it('explicit config takes precedence over env', () => {
+    process.env.PROOFAGE_API_KEY = 'pk_env';
+    process.env.PROOFAGE_SECRET_KEY = 'sk_env';
+
+    try {
+      const client = new ProofAgeClient({ apiKey: 'pk_explicit', secretKey: 'sk_explicit' });
+      const cfg = client.getConfig();
+      expect(cfg.apiKey).toBe('pk_explicit');
+      expect(cfg.secretKey).toBe('sk_explicit');
+    } finally {
+      delete process.env.PROOFAGE_API_KEY;
+      delete process.env.PROOFAGE_SECRET_KEY;
+    }
+  });
+
   it('gets workspace', async () => {
     const client = new ProofAgeClient(baseConfig);
     const ws = (await client.workspace().get()) as Record<string, unknown> | null;

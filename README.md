@@ -12,55 +12,71 @@ Node.js client for the [ProofAge](https://proofage.xyz) API with **HMAC request 
 npm install @proofage/node
 ```
 
-## Configuration
+## Quick Start
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `apiKey` | Yes | — | Workspace API key (`X-API-Key`) |
-| `secretKey` | Yes | — | Secret key for HMAC signing |
-| `baseUrl` | No | `https://api.proofage.xyz` | API base URL |
-| `version` | No | `v1` | API version path segment |
-| `timeout` | No | `30000` | Request timeout (ms) |
-| `retryAttempts` | No | `3` | Retries for transient failures |
-| `retryDelay` | No | `1000` | Base delay between retries (ms) |
+Set your environment variables (same names as the Laravel package):
 
-## Usage
+```bash
+PROOFAGE_API_KEY=pk_live_...
+PROOFAGE_SECRET_KEY=sk_live_...
+# Optional:
+# PROOFAGE_BASE_URL=https://api.proofage.xyz
+# PROOFAGE_WEBHOOK_TOLERANCE=300
+```
+
+Create a client — keys resolve from env automatically:
 
 ```typescript
 import { ProofAgeClient } from '@proofage/node';
 
-const client = new ProofAgeClient({
-  apiKey: process.env.PROOFAGE_API_KEY!,
-  secretKey: process.env.PROOFAGE_SECRET_KEY!,
-  baseUrl: process.env.PROOFAGE_BASE_URL ?? 'https://api.proofage.xyz',
-});
+const client = new ProofAgeClient();
 
 const workspace = await client.workspace().get();
-const consent = await client.workspace().getConsent();
 
 const verification = await client.verifications().create({
-  callback_url: 'https://your-app.com/api/webhooks/proofage',
+  callback_url: 'https://your-app.com/verify/complete',  // optional
   metadata: { order_id: '123' },
 });
-
-const status = await client.verifications(verification!.id as string).get();
 ```
 
-### API methods
+Or pass config explicitly:
+
+```typescript
+const client = new ProofAgeClient({
+  apiKey: 'pk_live_...',
+  secretKey: 'sk_live_...',
+});
+```
+
+## Configuration
+
+All options fall back to environment variables, then to defaults.
+
+| Option | Env var | Default | Description |
+|--------|---------|---------|-------------|
+| `apiKey` | `PROOFAGE_API_KEY` | — | Workspace API key |
+| `secretKey` | `PROOFAGE_SECRET_KEY` | — | Secret key for HMAC signing |
+| `baseUrl` | `PROOFAGE_BASE_URL` | `https://api.proofage.xyz` | API base URL |
+| `version` | `PROOFAGE_VERSION` | `v1` | API version path segment |
+| `timeout` | `PROOFAGE_TIMEOUT` | `30000` | Request timeout (ms) |
+| `retryAttempts` | `PROOFAGE_RETRY_ATTEMPTS` | `3` | Retries for transient failures |
+| `retryDelay` | `PROOFAGE_RETRY_DELAY` | `1000` | Base delay between retries (ms) |
+
+## API Methods
 
 - `client.workspace().get()` — `GET /v1/workspace`
 - `client.workspace().getConsent()` — `GET /v1/consent`
 - `client.verifications().create(body)` — `POST /v1/verifications`
-- `client.verifications(id).find(id)` / `.get()` — `GET /v1/verifications/{id}`
+- `client.verifications(id).get()` — `GET /v1/verifications/{id}`
 - `client.verifications(id).acceptConsent(body)` — `POST /v1/verifications/{id}/consent`
 - `client.verifications(id).uploadMedia({ type, file, filename })` — `POST /v1/verifications/{id}/media` (multipart)
 - `client.verifications(id).submit()` — `POST /v1/verifications/{id}/submit`
 
-Request bodies use **snake_case** keys to match the ProofAge API.
+Request bodies use **snake_case** keys to match the ProofAge API. `callback_url` is optional — if omitted, the verification result is available via polling or webhook.
 
 ## Webhooks
 
-ProofAge sends `POST` requests with:
+ProofAge sends `POST` requests with HMAC headers:
 
 | Header | Description |
 |--------|-------------|
@@ -68,32 +84,65 @@ ProofAge sends `POST` requests with:
 | `X-HMAC-Signature` | HMAC-SHA256 hex digest of `{timestamp}.{rawJsonBody}` |
 | `X-Timestamp` | Unix timestamp (seconds) |
 
-Verify the **raw body** string (e.g. `await request.text()` in Next.js App Router) before parsing JSON:
+### Drop-in handler (recommended)
+
+One-liner for Next.js App Router, Hono, Cloudflare Workers, or any framework with a standard `Request`:
+
+```typescript
+import { webhookHandler } from '@proofage/node';
+
+// Keys and tolerance resolve from env automatically
+export const POST = webhookHandler(async (payload) => {
+  console.log(payload.verification_id, payload.status);
+  // your business logic: update DB, send email, etc.
+});
+```
+
+Returns `200` on success, `401` on invalid signature, `400` on invalid JSON, `500` if your callback throws.
+
+### Manual verification
+
+For full control or non-standard frameworks:
 
 ```typescript
 import { verifyWebhookSignature } from '@proofage/node';
 
-export async function POST(request: Request) {
-  const rawBody = await request.text();
+const rawBody = await request.text();
 
-  verifyWebhookSignature({
-    rawBody,
-    signature: request.headers.get('x-hmac-signature'),
-    timestamp: request.headers.get('x-timestamp'),
-    authClient: request.headers.get('x-auth-client'),
-    secretKey: process.env.PROOFAGE_SECRET_KEY,
-    apiKey: process.env.PROOFAGE_API_KEY,
-    tolerance: 300,
-  });
+verifyWebhookSignature({
+  rawBody,
+  signature: request.headers.get('x-hmac-signature'),
+  timestamp: request.headers.get('x-timestamp'),
+  authClient: request.headers.get('x-auth-client'),
+  // apiKey and secretKey resolve from env if omitted
+});
 
-  const payload = JSON.parse(rawBody);
-  // Your business logic: update order, grant access, etc.
-
-  return Response.json({ received: true });
-}
+const payload = JSON.parse(rawBody);
 ```
 
-On failure, `verifyWebhookSignature` throws `WebhookVerificationError` with a `code` suitable for logging.
+### Mid-level helper
+
+`handleWebhook()` verifies + parses in one call, returns a result object:
+
+```typescript
+import { handleWebhook } from '@proofage/node';
+
+const { verified, payload, error } = await handleWebhook(request);
+if (!verified) {
+  return new Response(null, { status: 401 });
+}
+// payload is typed as WebhookPayload
+```
+
+## CLI
+
+Verify your setup from the terminal:
+
+```bash
+npx @proofage/node verify-setup
+```
+
+Reads `PROOFAGE_API_KEY`, `PROOFAGE_SECRET_KEY`, and `PROOFAGE_BASE_URL` from `.env.local` / `.env` automatically. Auto-skips TLS verification for local dev domains (`.test`, `.local`, `localhost`).
 
 ## Errors
 
