@@ -61,6 +61,18 @@ function parseArgs(argv: string[]): Record<string, string> {
   return result;
 }
 
+function isLocalUrl(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname.endsWith('.test') ||
+      hostname.endsWith('.local');
+  } catch {
+    return false;
+  }
+}
+
 async function verifySetup(args: Record<string, string>): Promise<boolean> {
   console.log();
   console.log(`ProofAge Node SDK — verify-setup`);
@@ -69,6 +81,11 @@ async function verifySetup(args: Record<string, string>): Promise<boolean> {
   const apiKey = resolveEnv(args['api-key'], 'PROOFAGE_API_KEY');
   const secretKey = resolveEnv(args['secret-key'], 'PROOFAGE_SECRET_KEY');
   const baseUrl = resolveEnv(args['base-url'], 'PROOFAGE_BASE_URL');
+
+  const insecure = args['insecure'] !== undefined || (baseUrl != null && isLocalUrl(baseUrl));
+  if (insecure && !process.env['NODE_TLS_REJECT_UNAUTHORIZED']) {
+    process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
+  }
 
   let hasError = false;
 
@@ -90,7 +107,7 @@ async function verifySetup(args: Record<string, string>): Promise<boolean> {
 
   ok('Configuration present');
   if (baseUrl) {
-    hint(`Base URL: ${baseUrl}`);
+    hint(`Base URL: ${baseUrl}${insecure ? ' (TLS verification skipped)' : ''}`);
   }
 
   let client: ProofAgeClient;
@@ -164,6 +181,7 @@ Options:
   --api-key       ProofAge API key (or set PROOFAGE_API_KEY env var)
   --secret-key    ProofAge secret key (or set PROOFAGE_SECRET_KEY env var)
   --base-url      ProofAge API base URL (or set PROOFAGE_BASE_URL env var)
+  --insecure      Skip TLS certificate verification (auto-enabled for .test/.local)
   --help          Show this help message
 `);
 }
