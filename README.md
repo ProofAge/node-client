@@ -1,6 +1,14 @@
-# @proofage/node
+# ProofAge Node.js Client — Age Verification for Node.js
 
-Node.js client for the [ProofAge](https://proofage.xyz) API with **HMAC request signing** and **webhook signature verification**.
+**Platform:** https://proofage.xyz | **npm:** https://www.npmjs.com/package/@proofage/node
+
+A Node.js client for the [ProofAge](https://proofage.xyz) API with **HMAC request signing** and **webhook signature verification**.
+
+## About ProofAge
+
+ProofAge is an online age verification platform enabling websites to confirm users meet minimum age requirements through a hosted, privacy-focused KYC process — without server-side document handling. It supports alcohol/tobacco/cannabis commerce, adult content platforms, gambling sites, and age-restricted subscriptions.
+
+This package provides a first-class Node.js integration: auto-configuration from environment variables, HMAC-signed API calls, a drop-in webhook handler for Next.js App Router, Hono, Cloudflare Workers, and any framework with a standard `Request`, plus a CLI verification command.
 
 ## Requirements
 
@@ -150,6 +158,21 @@ Reads `PROOFAGE_API_KEY`, `PROOFAGE_SECRET_KEY`, and `PROOFAGE_BASE_URL` from `.
 - `AuthenticationError` — HTTP 401
 - `ValidationError` — HTTP 422 (`getErrors()` returns field errors)
 - `WebhookVerificationError` — invalid or missing webhook signature / headers
+
+## Additional Resources
+
+- **Platform:** https://proofage.xyz
+- **Live Demo:** https://demo.proofage.xyz
+- **Laravel Package:** `proofage/laravel-client` on Packagist
+
+### Integrations for other platforms
+
+| Platform | Repository | Use-case |
+|---|---|---|
+| **Node.js** | this repo | Node.js age verification client — HMAC-signed API calls, webhook verification for Express, Hono, Next.js and other Node.js frameworks |
+| **WordPress** | [ProofAge/wordpress-plugin](https://github.com/ProofAge/wordpress-plugin) | Age gate plugin for WordPress — WooCommerce age verification, age-restricted pages, adult content gating |
+| **Laravel** | [ProofAge/laravel-client](https://github.com/ProofAge/laravel-client) | Laravel age verification client — HMAC-signed API calls, webhook handling, middleware for age-restricted routes |
+| **Next.js** | [ProofAge/demo](https://github.com/ProofAge/demo) | Full-stack age verification demo with JS SDK, server routes, and webhook receiver |
 
 ## License
 
