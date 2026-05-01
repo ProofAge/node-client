@@ -1,0 +1,16 @@
+---
+description: npm release versioning and publishing workflow
+alwaysApply: true
+---
+
+# npm Release Versioning
+
+For this package, release versions must be updated in npm metadata and git together.
+
+- Use `npm version <patch|minor|major> --no-git-tag-version` to update both `package.json` and `package-lock.json`.
+- Run `npm test` and `npm run build` before saying a release is ready.
+- Commit code changes, version changes, and lockfile changes that belong to the release.
+- Create a matching git tag with a `v` prefix, e.g. package `0.1.1` -> tag `v0.1.1`.
+- Push the commit and tag; the GitHub Actions publish workflow runs on `v*` tags.
+- Prefer Trusted Publishing via GitHub Actions. Do not run `npm publish` manually unless explicitly requested.
+- If npm suggests `npm pkg fix`, run it, review the diff, and commit resulting metadata changes before tagging.
