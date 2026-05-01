@@ -31,6 +31,31 @@ function throwErr(code: WebhookVerificationErrorCode, message: string, status = 
   throw new WebhookVerificationError(code, message, status);
 }
 
+function generateExpectedSignature(payload: string, timestamp: number, secretKey: string): string {
+  return createHmac('sha256', secretKey)
+    .update(`${timestamp}.${payload}`, 'utf8')
+    .digest('hex');
+}
+
+function signaturesMatch(signature: string, expected: string): boolean {
+  const sigBuf = Buffer.from(signature, 'utf8');
+  const expBuf = Buffer.from(expected, 'utf8');
+
+  return sigBuf.length === expBuf.length && timingSafeEqual(sigBuf, expBuf);
+}
+
+function canonicalizeJsonPayload(payload: string): string | null {
+  if (payload === '') {
+    return null;
+  }
+
+  try {
+    return JSON.stringify(JSON.parse(payload));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Verify ProofAge webhook HMAC (same algorithm as Laravel `WebhookSignatureVerifier` + middleware checks).
  * Keys and tolerance resolve from process.env when not provided — same env names as Laravel package.
@@ -74,15 +99,23 @@ export function verifyWebhookSignature(input: VerifyWebhookSignatureInput): void
     throwErr('TIMESTAMP_TOO_OLD', 'Timestamp is outside allowed tolerance');
   }
 
-  const expected = createHmac('sha256', secretKey)
-    .update(`${ts}.${rawBody}`, 'utf8')
-    .digest('hex');
+  const expected = generateExpectedSignature(rawBody, ts, secretKey);
 
-  const sigBuf = Buffer.from(signature, 'utf8');
-  const expBuf = Buffer.from(expected, 'utf8');
-  if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
-    throwErr('INVALID_SIGNATURE', 'HMAC signature is invalid');
+  if (signaturesMatch(signature, expected)) {
+    return;
   }
+
+  const canonicalBody = canonicalizeJsonPayload(rawBody);
+
+  if (
+    canonicalBody !== null
+    && canonicalBody !== rawBody
+    && signaturesMatch(signature, generateExpectedSignature(canonicalBody, ts, secretKey))
+  ) {
+    return;
+  }
+
+  throwErr('INVALID_SIGNATURE', 'HMAC signature is invalid');
 }
 
 export interface HandleWebhookOptions {

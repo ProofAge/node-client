@@ -33,6 +33,36 @@ describe('verifyWebhookSignature', () => {
     ).not.toThrow();
   });
 
+  it('accepts equivalent JSON with unicode escaping', () => {
+    const payload = {
+      verification_id: 'ver-escaped-unicode',
+      status: 'approved',
+      external_id: 'user_123',
+      external_metadata: {
+        name: 'Sample profile £ with unicode-ready metadata',
+        email: 'webhook-sample@example.test',
+        country_code: null,
+      },
+      reason: null,
+      timestamp: '2026-05-01T07:32:27+00:00',
+    };
+    const rawBody = '{"verification_id":"ver-escaped-unicode","status":"approved","external_id":"user_123","external_metadata":{"name":"Sample profile \\u00a3 with unicode-ready metadata","email":"webhook-sample@example.test","country_code":null},"reason":null,"timestamp":"2026-05-01T07:32:27+00:00"}';
+    const ts = Math.floor(Date.now() / 1000);
+    const signature = generateWebhookSignature(payload, secretKey, ts);
+
+    expect(() =>
+      verifyWebhookSignature({
+        rawBody,
+        signature,
+        timestamp: ts,
+        authClient: apiKey,
+        secretKey,
+        apiKey,
+        tolerance: 300,
+      }),
+    ).not.toThrow();
+  });
+
   it('accepts string timestamp', () => {
     const rawBody = '{"ok":true}';
     const ts = Math.floor(Date.now() / 1000);

@@ -1,6 +1,6 @@
 {
   "name": "@proofage/node",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Node.js client for ProofAge API with HMAC authentication and webhook verification",
   "license": "MIT",
   "type": "module",
