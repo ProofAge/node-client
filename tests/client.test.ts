@@ -96,6 +96,29 @@ describe('ProofAgeClient', () => {
     expect(v?.id).toBe('ver_123');
   });
 
+  it('blocks verification face', async () => {
+    const spy = vi.fn(async () => Promise.resolve(new Response(null, { status: 204 })));
+    vi.stubGlobal('fetch', spy);
+
+    const client = new ProofAgeClient(baseConfig);
+    const result = await client.verifications('ver_123').blockFace();
+
+    expect(result).toBeNull();
+    expect(spy).toHaveBeenCalledOnce();
+    const [url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(url).toBe('https://api.test.com/v1/verifications/ver_123/blocked-face');
+    expect(init.method).toBe('POST');
+    expect(headers['X-HMAC-Signature']).toBeDefined();
+  });
+
+  it('throws when blocking verification face without id', async () => {
+    const client = new ProofAgeClient(baseConfig);
+
+    await expect(client.verifications().blockFace()).rejects.toThrow(TypeError);
+    await expect(client.verifications().blockFace()).rejects.toThrow('Verification ID is required');
+  });
+
   it('sends X-API-Key and X-HMAC-Signature headers', async () => {
     const spy = vi.fn(async () => Promise.resolve(new Response('{}', { status: 200 })));
     vi.stubGlobal('fetch', spy);

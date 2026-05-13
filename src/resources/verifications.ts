@@ -58,4 +58,12 @@ export class VerificationResource {
     const res = await this.client.makeRequest('POST', `verifications/${this.verificationId}/submit`, {});
     return (await res.json()) as Record<string, unknown> | null;
   }
+
+  async blockFace(): Promise<Record<string, unknown> | null> {
+    if (!this.verificationId) {
+      throw new TypeError('Verification ID is required');
+    }
+    const res = await this.client.makeRequest('POST', `verifications/${this.verificationId}/blocked-face`, {});
+    return (await res.json()) as Record<string, unknown> | null;
+  }
 }
