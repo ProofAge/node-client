@@ -9,7 +9,6 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "rootDir": "src",
     "noEmit": true,
     "esModuleInterop": true,
     "resolveJsonModule": true

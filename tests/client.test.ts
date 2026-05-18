@@ -9,6 +9,10 @@ function mockFetch(status: number, body: unknown) {
   );
 }
 
+function fetchCall(spy: ReturnType<typeof vi.fn>, index = 0): [string, RequestInit] {
+  return spy.mock.calls[index] as unknown as [string, RequestInit];
+}
+
 describe('ProofAgeClient', () => {
   const baseConfig = {
     apiKey: 'test-api-key',
@@ -105,11 +109,71 @@ describe('ProofAgeClient', () => {
 
     expect(result).toBeNull();
     expect(spy).toHaveBeenCalledOnce();
-    const [url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchCall(spy);
     const headers = init.headers as Record<string, string>;
     expect(url).toBe('https://api.test.com/v1/verifications/ver_123/blocked-face');
     expect(init.method).toBe('POST');
     expect(headers['X-HMAC-Signature']).toBeDefined();
+  });
+
+  it('gets verification document result', async () => {
+    const spy = vi.fn(async () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            document: {
+              fields: {
+                first_name: 'John',
+                last_name: 'Doe',
+                date_of_birth: '1990-01-15',
+                document_number: 'AB123456',
+              },
+            },
+            media: [
+              {
+                id: 'media_selfie',
+                type: 'selfie',
+                signed_url: 'https://storage.test/selfie.jpg',
+                expires_at: '2026-05-18T13:00:00+00:00',
+              },
+            ],
+            meta: {
+              attempt_id: 'attempt_123',
+              signed_url_ttl_seconds: 3600,
+              signed_url_expires_at: '2026-05-18T13:00:00+00:00',
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', spy);
+
+    const client = new ProofAgeClient(baseConfig);
+    const result = await client.verifications('ver_123').document();
+
+    expect(result?.document).toMatchObject({
+      fields: {
+        first_name: 'John',
+        document_number: 'AB123456',
+      },
+    });
+    expect(result?.meta).toMatchObject({
+      signed_url_ttl_seconds: 3600,
+    });
+    expect(spy).toHaveBeenCalledOnce();
+    const [url, init] = fetchCall(spy);
+    const headers = init.headers as Record<string, string>;
+    expect(url).toBe('https://api.test.com/v1/verifications/ver_123/document');
+    expect(init.method).toBe('GET');
+    expect(headers['X-HMAC-Signature']).toBeDefined();
+  });
+
+  it('throws when getting verification document without id', async () => {
+    const client = new ProofAgeClient(baseConfig);
+
+    await expect(client.verifications().document()).rejects.toThrow(TypeError);
+    await expect(client.verifications().document()).rejects.toThrow('Verification ID is required');
   });
 
   it('throws when blocking verification face without id', async () => {
@@ -127,7 +191,7 @@ describe('ProofAgeClient', () => {
     await client.workspace().get();
 
     expect(spy).toHaveBeenCalledOnce();
-    const [, init] = spy.mock.calls[0] as [string, RequestInit];
+    const [, init] = fetchCall(spy);
     const headers = init.headers as Record<string, string>;
     expect(headers['X-API-Key']).toBe('test-api-key');
     expect(headers['X-HMAC-Signature']).toBeDefined();
