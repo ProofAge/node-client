@@ -89,14 +89,14 @@ describe('ProofAgeClient', () => {
 
   it('gets workspace', async () => {
     const client = new ProofAgeClient(baseConfig);
-    const ws = (await client.workspace().get()) as Record<string, unknown> | null;
+    const ws = await client.workspace().get();
     expect(ws?.name).toBe('Test Workspace');
   });
 
   it('creates verification', async () => {
     mockFetch(200, { id: 'ver_123', status: 'created' });
     const client = new ProofAgeClient(baseConfig);
-    const v = (await client.verifications().create({ callback_url: 'https://x.com/wh' })) as Record<string, unknown> | null;
+    const v = await client.verifications().create({ callback_url: 'https://x.com/wh' });
     expect(v?.id).toBe('ver_123');
   });
 

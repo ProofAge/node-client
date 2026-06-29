@@ -79,8 +79,13 @@ All options fall back to environment variables, then to defaults.
 - `client.verifications(id).acceptConsent(body)` — `POST /v1/verifications/{id}/consent`
 - `client.verifications(id).uploadMedia({ type, file, filename })` — `POST /v1/verifications/{id}/media` (multipart)
 - `client.verifications(id).submit()` — `POST /v1/verifications/{id}/submit`
+- `client.verifications(id).document()` — `GET /v1/verifications/{id}/document`
+- `client.verifications(id).estimation()` — `GET /v1/verifications/{id}/estimation`
+- `client.verifications(id).blockFace({ reason })` — `POST /v1/verifications/{id}/blocked-face`
 
 Request bodies use **snake_case** keys to match the ProofAge API. `callback_url` is optional — if omitted, the verification result is available via polling or webhook.
+
+Every method is fully typed (see `src/types.ts` / the package's type definitions), and the exact request/response shape of each endpoint is documented in `AGENTS.md` and the bundled `openapi.json`.
 
 ## Webhooks
 

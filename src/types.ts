@@ -35,6 +35,110 @@ export interface UploadMediaPayload {
 }
 
 /**
+ * POST /v1/verifications/{id}/blocked-face body.
+ */
+export interface BlockFacePayload {
+  reason?: string;
+}
+
+/* ----------------------------------------------------------------------------
+ * Response shapes (snake_case, matching the API). These are the authoritative
+ * response contract: the bundled openapi.json cannot describe most response
+ * bodies (generator limitation), so these types — guarded by the drift test —
+ * are what callers should rely on.
+ * ------------------------------------------------------------------------- */
+
+/** GET /v1/workspace */
+export interface WorkspaceInfo {
+  id: string;
+  name: string;
+  flow_type: string;
+  mode: string;
+  age_mode: string | null;
+  age_threshold: number | null;
+  verification_type: string;
+  redirect_url: string | null;
+  webhook_url: string | null;
+  allow_expired_documents: boolean;
+  allow_duplicate_accounts: boolean;
+}
+
+/** GET /v1/consent */
+export interface ConsentInfo {
+  id: number;
+  version: string;
+  text_sha256: string;
+  url: string;
+}
+
+/** GET /v1/verifications/{id} */
+export interface Verification {
+  id: string;
+  external_id: string | null;
+  external_metadata: Record<string, unknown> | null;
+  redirect_url: string | null;
+  status: string;
+  reason: string | null;
+  consent_accepted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** POST /v1/verifications also returns the hosted session `url`. */
+export interface CreatedVerification extends Verification {
+  url: string;
+}
+
+/** POST /v1/verifications/{id}/consent */
+export interface AcceptConsentResult {
+  consent_version_id: number;
+  consent_accepted_at: string;
+}
+
+/** POST /v1/verifications/{id}/media and POST /v1/verifications/{id}/submit */
+export interface MessageResult {
+  message: string;
+}
+
+/** GET /v1/verifications/{id}/document */
+export interface VerificationDocument {
+  document: {
+    fields: {
+      first_name: string | null;
+      last_name: string | null;
+      date_of_birth: string | null;
+      document_number: string | null;
+    };
+  };
+  media: Array<{
+    id: string;
+    type: string;
+    signed_url: string | null;
+    expires_at: string;
+  }>;
+  meta: {
+    attempt_id: string | null;
+    signed_url_ttl_seconds: number;
+    signed_url_expires_at: string;
+  };
+}
+
+/** GET /v1/verifications/{id}/estimation (gender value: 0 = female, 1 = male) */
+export interface AgeEstimation {
+  verification_id: string;
+  attempt_id: string | null;
+  age_threshold: {
+    minimum: number | null;
+    passed: boolean | null;
+    confidence: number | null;
+  };
+  gender: {
+    value: 0 | 1 | null;
+    confidence: number | null;
+  } | null;
+}
+
+/**
  * Webhook JSON body (ProofAge outbound webhook).
  */
 export interface WebhookPayload {

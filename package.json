@@ -18,14 +18,17 @@
     "proofage": "./dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "openapi.json",
+    "AGENTS.md"
   ],
   "sideEffects": false,
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "sync-spec": "node scripts/sync-spec.mjs"
   },
   "engines": {
     "node": ">=18"
