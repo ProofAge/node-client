@@ -21,9 +21,18 @@ export { VerificationResource } from './resources/verifications.js';
 export { WorkspaceResource } from './resources/workspace.js';
 export type {
   AcceptConsentPayload,
+  AcceptConsentResult,
+  AgeEstimation,
   ApiErrorBody,
+  BlockFacePayload,
+  ConsentInfo,
+  CreatedVerification,
   CreateVerificationPayload,
+  MessageResult,
   ProofAgeConfig,
   UploadMediaPayload,
+  Verification,
+  VerificationDocument,
   WebhookPayload,
+  WorkspaceInfo,
 } from './types.js';

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProofAgeClient } from './client.js';
 import { ProofAgeError } from './errors.js';
+import type { WorkspaceInfo } from './types.js';
 
 function loadEnvFile(filePath: string): void {
   let content: string;
@@ -125,7 +126,7 @@ async function verifySetup(args: Record<string, string>): Promise<boolean> {
     return false;
   }
 
-  let workspaceData: Record<string, unknown> | null = null;
+  let workspaceData: WorkspaceInfo | null = null;
   try {
     workspaceData = await client.workspace().get();
 
