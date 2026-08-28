@@ -21,9 +21,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org/
 
+      # Trusted Publishing needs a recent npm, and npm@latest now requires
+      # Node >=22.22 — pinning the runner to 20 made every release fail on
+      # EBADENGINE before it reached the registry.
       - name: Use latest npm
         run: npm install -g npm@latest
 
