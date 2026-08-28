@@ -132,6 +132,60 @@ export class ProofAgeClient {
     return this.sendWithRetry(method, url, headers, body);
   }
 
+  /**
+   * Fetch a binary endpoint without decoding the body.
+   *
+   * sendWithRetry() reads every response through res.text(), which corrupts
+   * bytes, and it retries 429. Neither is right for a download: text decoding
+   * destroys the image, and retrying a rate limit in-process spends the same
+   * per-minute budget that just refused us — a caller running downloads from a
+   * queue should let its own backoff own that wait. So this path decodes
+   * nothing and never retries an HTTP status.
+   *
+   * Returns the web ReadableStream of the body, so a large file never has to
+   * sit in memory.
+   */
+  async makeStreamedRequest(
+    method: string,
+    endpoint: string,
+  ): Promise<ReadableStream<Uint8Array>> {
+    const url = `${this.config.baseUrl}/${this.config.version}/${endpoint.replace(/^\//, '')}`;
+    const signature = generateHmacSignature(
+      this.config.secretKey,
+      method,
+      this.config.version,
+      endpoint,
+      '',
+    );
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.config.timeout);
+
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: {
+          'X-API-Key': this.config.apiKey,
+          'X-HMAC-Signature': signature,
+          Accept: '*/*',
+        },
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        this.throwForParsedErrorResponse(res.status, await res.text());
+      }
+
+      if (!res.body) {
+        throw new ProofAgeError('Response carried no body', res.status);
+      }
+
+      return res.body;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private async sendWithRetry(
     method: string,
     url: string,

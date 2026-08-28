@@ -113,13 +113,11 @@ export interface VerificationDocument {
   media: Array<{
     id: string;
     type: string;
-    signed_url: string | null;
-    expires_at: string;
+    /** Download endpoint for this media; null once purged or past retention. */
+    url: string | null;
   }>;
   meta: {
     attempt_id: string | null;
-    signed_url_ttl_seconds: number;
-    signed_url_expires_at: string;
   };
 }
 

@@ -78,6 +78,43 @@ export class VerificationResource {
     return (await res.json()) as VerificationDocument | null;
   }
 
+  /**
+   * Download one media file belonging to the verification.
+   *
+   * Streams the bytes from the ProofAge API under the same API key and HMAC
+   * signature as every other call. The media ID is `media[].id` from
+   * document(); check that entry's `url` is not null first, because null means
+   * the media has been purged or is past its retention window.
+   *
+   * Media that does not belong to this verification, or is no longer
+   * available, answers 404 and throws.
+   */
+  async downloadMedia(mediaId: string): Promise<ReadableStream<Uint8Array>> {
+    if (!this.verificationId) {
+      throw new TypeError('Verification ID is required');
+    }
+    return this.client.makeStreamedRequest(
+      'GET',
+      `verifications/${this.verificationId}/media/${mediaId}`,
+    );
+  }
+
+  /**
+   * Download one media file straight to disk, without holding it in memory.
+   *
+   * Returns the path written to.
+   */
+  async downloadMediaTo(mediaId: string, path: string): Promise<string> {
+    const body = await this.downloadMedia(mediaId);
+    const { createWriteStream } = await import('node:fs');
+    const { Readable } = await import('node:stream');
+    const { pipeline } = await import('node:stream/promises');
+
+    await pipeline(Readable.fromWeb(body as never), createWriteStream(path));
+
+    return path;
+  }
+
   async estimation(): Promise<AgeEstimation | null> {
     if (!this.verificationId) {
       throw new TypeError('Verification ID is required');

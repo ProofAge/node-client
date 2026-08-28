@@ -49,7 +49,11 @@ Response: `{ message: string }`. Error: `422 { error: { code, message } }`.
 
 ### GET /verifications/{verification}/document — `client.verifications(id).document()` → `VerificationDocument`
 Request: none.
-Response: `{ document: { fields: { first_name: string|null, last_name: string|null, date_of_birth: string|null (YYYY-MM-DD), document_number: string|null } }, media: [ { id: string, type: "selfie"|"document_front"|"document_back", signed_url: string|null, expires_at: string } ], meta: { attempt_id: string|null, signed_url_ttl_seconds: number, signed_url_expires_at: string } }`
+Response: `{ document: { fields: { first_name: string|null, last_name: string|null, date_of_birth: string|null (YYYY-MM-DD), document_number: string|null } }, media: [ { id: string, type: "selfie"|"document_front"|"document_back", url: string|null } ], meta: { attempt_id: string|null } }`. `url` is the download endpoint for that media, null once it has been purged or is past retention.
+
+### GET /verifications/{verification}/media/{media} — `proofage.verifications(id).downloadMedia(mediaId)`
+Request: none. `{media}` is `media[].id` from document().
+Response: the image bytes, `Content-Type` from the file (e.g. `image/jpeg`). `downloadMedia()` returns a web `ReadableStream<Uint8Array>`; `downloadMediaTo(mediaId, path)` streams to disk and returns the path. Check `media[].url` is not null before downloading — null means purged or past retention. Error: `404 { error: { code: "MEDIA_NOT_FOUND", message } }`. Downloads never retry an HTTP status, 429 included: run them from a queue and let its backoff own the wait.
 
 ### GET /verifications/{verification}/estimation — `client.verifications(id).estimation()` → `AgeEstimation`
 Request: none.

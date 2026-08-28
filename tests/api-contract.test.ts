@@ -70,18 +70,19 @@ const OPERATIONS: Record<string, OperationContract> = {
       'consent_accepted_at',
       'created_at',
       'updated_at',
+      'duplicate_check',
     ],
   },
   'verifications.acceptConsent': {
     method: 'POST',
     path: '/verifications/{verification}/consent',
-    request: ['consent_version_id', 'text_sha256'],
+    request: ['consent_version_id', 'text_sha256', 'device', 'in_app_browser', 'in_iframe', 'referrer', 'camera_permission', 'camera_policy_allowed'],
     response: ['consent_version_id', 'consent_accepted_at'],
   },
   'verifications.uploadMedia': {
     method: 'POST',
     path: '/verifications/{verification}/media',
-    request: ['file', 'type', 'side', 'document', 'fingerprint', 'head_turn_step', 'capture_resolution', 'device_info'],
+    request: ['file', 'type', 'side', 'document', 'fingerprint', 'head_turn_step', 'capture_resolution', 'device_info', 'liveness_telemetry'],
     response: ['message'],
   },
   'verifications.submit': {
@@ -95,6 +96,12 @@ const OPERATIONS: Record<string, OperationContract> = {
     path: '/verifications/{verification}/document',
     request: [],
     response: ['document', 'media', 'meta'],
+  },
+  'verifications.downloadMedia': {
+    method: 'GET',
+    path: '/verifications/{verification}/media/{media}',
+    request: [],
+    response: [],
   },
   'verifications.estimation': {
     method: 'GET',
@@ -201,7 +208,7 @@ describe('API contract drift', () => {
       expect(sorted(props), `response fields for [${name}]`).toEqual(sorted(op.response));
       checked.push(name);
     }
-    expect(sorted(checked)).toEqual(['verifications.document', 'verifications.estimation', 'workspace.get']);
+    expect(sorted(checked)).toEqual(['verifications.document', 'verifications.estimation', 'verifications.find', 'workspace.get']);
   });
 
   it('AGENTS.md documents every endpoint', () => {

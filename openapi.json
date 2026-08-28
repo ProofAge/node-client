@@ -68,6 +68,95 @@
                 }
             }
         },
+        "/verifications/{verification}/media/{media}": {
+            "get": {
+                "operationId": "downloadVerificationMedia",
+                "description": "Streams the bytes of a selfie or document image belonging to the\nverification, served by ProofAge under the same API key and HMAC\nsignature as every other endpoint. Use this instead of `signed_url`\nwhen the presigned storage URL is unreachable from your network.\n\nThe response body is the image itself; `Content-Type` carries its MIME\ntype. Media that has been purged, has passed its retention window, or\ndoes not belong to this verification answers 404.",
+                "summary": "Download media",
+                "tags": [
+                    "Media"
+                ],
+                "parameters": [
+                    {
+                        "name": "verification",
+                        "in": "path",
+                        "required": true,
+                        "description": "The verification ID",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "name": "media",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The media file itself. Content-Type carries its MIME type.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object"
+                                }
+                            },
+                            "image/jpeg": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Media does not belong to this verification, or is no longer available.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "error": {
+                                                "code": "MEDIA_NOT_FOUND",
+                                                "message": "Media not found."
+                                            }
+                                        }
+                                    ],
+                                    "properties": {
+                                        "error": {
+                                            "type": "object",
+                                            "properties": {
+                                                "code": {
+                                                    "type": "string"
+                                                },
+                                                "message": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "required": [
+                                                "code",
+                                                "message"
+                                            ]
+                                        }
+                                    },
+                                    "required": [
+                                        "error"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/ValidationException"
+                    }
+                }
+            }
+        },
         "/verifications": {
             "post": {
                 "operationId": "createVerification",
@@ -176,11 +265,143 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "`VerificationResource`",
+                        "description": "Verification session state.",
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/VerificationResource"
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "id": "550e8400-e29b-41d4-a716-446655440000",
+                                            "external_id": "user-123",
+                                            "external_metadata": {
+                                                "plan": "premium"
+                                            },
+                                            "redirect_url": "https://example.com/callback",
+                                            "status": "approved",
+                                            "reason": null,
+                                            "duplicate_check": {
+                                                "checked": true,
+                                                "duplicate_count": 2,
+                                                "duplicates": [
+                                                    {
+                                                        "verification_id": "771a9200-c3df-4e88-b201-112233445566",
+                                                        "external_id": "user-456",
+                                                        "similarity_score": 0.93,
+                                                        "verified_at": "2026-03-11T09:22:41+00:00"
+                                                    }
+                                                ]
+                                            },
+                                            "consent_accepted_at": "2026-03-19T12:01:00+00:00",
+                                            "created_at": "2026-03-19T12:00:00+00:00",
+                                            "updated_at": "2026-03-19T12:05:00+00:00"
+                                        }
+                                    ],
+                                    "properties": {
+                                        "id": {
+                                            "type": "string"
+                                        },
+                                        "external_id": {
+                                            "type": [
+                                                "string",
+                                                "null"
+                                            ]
+                                        },
+                                        "external_metadata": {
+                                            "type": [
+                                                "object",
+                                                "null"
+                                            ],
+                                            "additionalProperties": {}
+                                        },
+                                        "redirect_url": {
+                                            "type": [
+                                                "string",
+                                                "null"
+                                            ]
+                                        },
+                                        "status": {
+                                            "type": "string"
+                                        },
+                                        "reason": {
+                                            "type": [
+                                                "string",
+                                                "null"
+                                            ]
+                                        },
+                                        "duplicate_check": {
+                                            "type": "object",
+                                            "properties": {
+                                                "checked": {
+                                                    "type": "boolean"
+                                                },
+                                                "duplicate_count": {
+                                                    "type": "integer"
+                                                },
+                                                "duplicates": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                            "verification_id": {
+                                                                "type": "string"
+                                                            },
+                                                            "external_id": {
+                                                                "type": [
+                                                                    "string",
+                                                                    "null"
+                                                                ]
+                                                            },
+                                                            "similarity_score": {
+                                                                "type": "number"
+                                                            },
+                                                            "verified_at": {
+                                                                "type": [
+                                                                    "string",
+                                                                    "null"
+                                                                ]
+                                                            }
+                                                        },
+                                                        "required": [
+                                                            "verification_id",
+                                                            "external_id",
+                                                            "similarity_score",
+                                                            "verified_at"
+                                                        ]
+                                                    }
+                                                }
+                                            },
+                                            "required": [
+                                                "checked",
+                                                "duplicate_count",
+                                                "duplicates"
+                                            ]
+                                        },
+                                        "consent_accepted_at": {
+                                            "type": [
+                                                "string",
+                                                "null"
+                                            ]
+                                        },
+                                        "created_at": {
+                                            "type": "string"
+                                        },
+                                        "updated_at": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "id",
+                                        "external_id",
+                                        "external_metadata",
+                                        "redirect_url",
+                                        "status",
+                                        "reason",
+                                        "duplicate_check",
+                                        "consent_accepted_at",
+                                        "created_at",
+                                        "updated_at"
+                                    ]
                                 }
                             }
                         }
@@ -321,7 +542,7 @@
         "/verifications/{verification}/document": {
             "get": {
                 "operationId": "getVerificationDocument",
-                "description": "Retrieves sanitized document fields and the source media from the most relevant attempt.\nMedia URLs are signed and expire after the configured document result media TTL.",
+                "description": "Retrieves sanitized document fields and the source media from the most relevant attempt.\nEach media item carries a `url` for the download endpoint, or null when the\nmedia has been purged or has passed its retention window.",
                 "summary": "Get verification document result",
                 "tags": [
                     "Verification"
@@ -359,20 +580,16 @@
                                                 {
                                                     "id": "019de7a0-c11b-7373-9289-b0aa1ba08d13",
                                                     "type": "selfie",
-                                                    "signed_url": "https://example.com/selfie.jpg?signature=...",
-                                                    "expires_at": "2026-03-19T13:00:00+00:00"
+                                                    "url": "https://api.proofage.xyz/v1/verifications/019de7a0-c11b-7373-9289-b0aa1ba08d13/media/019de7a0-c11b-7373-9289-b0aa1ba08d13"
                                                 },
                                                 {
                                                     "id": "019de7a0-c129-7259-8a08-bc10390ecbdb",
                                                     "type": "document_front",
-                                                    "signed_url": "https://example.com/document-front.jpg?signature=...",
-                                                    "expires_at": "2026-03-19T13:00:00+00:00"
+                                                    "url": "https://api.proofage.xyz/v1/verifications/019de7a0-c11b-7373-9289-b0aa1ba08d13/media/019de7a0-c129-7259-8a08-bc10390ecbdb"
                                                 }
                                             ],
                                             "meta": {
-                                                "attempt_id": "019de7a2-0305-7269-9cff-1715c71b19ae",
-                                                "signed_url_ttl_seconds": 3600,
-                                                "signed_url_expires_at": "2026-03-19T13:00:00+00:00"
+                                                "attempt_id": "019de7a2-0305-7269-9cff-1715c71b19ae"
                                             }
                                         }
                                     ],
@@ -431,21 +648,17 @@
                                                     "type": {
                                                         "type": "string"
                                                     },
-                                                    "signed_url": {
+                                                    "url": {
                                                         "type": [
                                                             "string",
                                                             "null"
                                                         ]
-                                                    },
-                                                    "expires_at": {
-                                                        "type": "string"
                                                     }
                                                 },
                                                 "required": [
                                                     "id",
                                                     "type",
-                                                    "signed_url",
-                                                    "expires_at"
+                                                    "url"
                                                 ]
                                             }
                                         },
@@ -457,18 +670,10 @@
                                                         "string",
                                                         "null"
                                                     ]
-                                                },
-                                                "signed_url_ttl_seconds": {
-                                                    "type": "integer"
-                                                },
-                                                "signed_url_expires_at": {
-                                                    "type": "string"
                                                 }
                                             },
                                             "required": [
-                                                "attempt_id",
-                                                "signed_url_ttl_seconds",
-                                                "signed_url_expires_at"
+                                                "attempt_id"
                                             ]
                                         }
                                     },
@@ -674,6 +879,96 @@
                         "pattern": "^[a-f0-9]{64}$",
                         "minLength": 64,
                         "maxLength": 64
+                    },
+                    "in_app_browser": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 64
+                    },
+                    "camera_permission": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "What the browser said about the camera before anything asked for\nit. A verification that stalls at consent carries no camera\nevents at all, so this is the only place the answer can be kept.\nUnrecognised values are nulled in prepareForValidation() rather\nthan rejected \u2014 see the note there.",
+                        "enum": [
+                            "granted",
+                            "denied",
+                            "prompt",
+                            "unsupported"
+                        ]
+                    },
+                    "camera_policy_allowed": {
+                        "type": [
+                            "boolean",
+                            "null"
+                        ]
+                    },
+                    "in_iframe": {
+                        "type": [
+                            "boolean",
+                            "null"
+                        ]
+                    },
+                    "referrer": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "`android-app:<package>` when the launching app passes it; kept\nfor a human reading one stalled case, never branched on.",
+                        "maxLength": 512
+                    },
+                    "device": {
+                        "type": "object",
+                        "description": "Browser details, so a verification that stalls before its first\nupload still has technical information attached. Every field is\noptional: a browser that reports nothing must still be able to\naccept consent.",
+                        "properties": {
+                            "platform": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "maxLength": 255
+                            },
+                            "screen": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "maxLength": 64
+                            },
+                            "language": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "maxLength": 64
+                            },
+                            "timezone": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "maxLength": 64
+                            },
+                            "hardware_concurrency": {
+                                "type": [
+                                    "number",
+                                    "null"
+                                ],
+                                "minimum": 0,
+                                "maximum": 1024
+                            },
+                            "device_memory": {
+                                "type": [
+                                    "number",
+                                    "null"
+                                ],
+                                "minimum": 0,
+                                "maximum": 1024
+                            }
+                        }
                     }
                 },
                 "required": [
@@ -788,6 +1083,12 @@
                             "string",
                             "null"
                         ]
+                    },
+                    "liveness_telemetry": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
                     }
                 },
                 "required": [
@@ -853,18 +1154,14 @@
                                 "type": {
                                     "type": "string"
                                 },
-                                "signed_url": {
-                                    "type": "string"
-                                },
-                                "expires_at": {
+                                "url": {
                                     "type": "string"
                                 }
                             },
                             "required": [
                                 "id",
                                 "type",
-                                "signed_url",
-                                "expires_at"
+                                "url"
                             ]
                         }
                     },
@@ -873,18 +1170,10 @@
                         "properties": {
                             "attempt_id": {
                                 "type": "string"
-                            },
-                            "signed_url_ttl_seconds": {
-                                "type": "string"
-                            },
-                            "signed_url_expires_at": {
-                                "type": "string"
                             }
                         },
                         "required": [
-                            "attempt_id",
-                            "signed_url_ttl_seconds",
-                            "signed_url_expires_at"
+                            "attempt_id"
                         ]
                     }
                 },

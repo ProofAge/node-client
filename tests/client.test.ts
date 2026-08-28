@@ -257,3 +257,71 @@ describe('ProofAgeClient', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('media download', () => {
+  const baseConfig = {
+    apiKey: 'test-api-key',
+    secretKey: 'test-secret-key',
+    baseUrl: 'https://api.test.com',
+    version: 'v1',
+    retryAttempts: 3,
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('streams the bytes and signs the media path', async () => {
+    const spy = vi.fn(async () =>
+      Promise.resolve(new Response('binary-image-bytes', { status: 200, headers: { 'Content-Type': 'image/jpeg' } })),
+    );
+    vi.stubGlobal('fetch', spy);
+
+    const client = new ProofAgeClient(baseConfig);
+    const body = await client.verifications('ver_1').downloadMedia('med_1');
+
+    expect(await new Response(body).text()).toBe('binary-image-bytes');
+
+    const [url, init] = fetchCall(spy);
+    expect(url).toBe('https://api.test.com/v1/verifications/ver_1/media/med_1');
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-API-Key']).toBe('test-api-key');
+    expect(headers['X-HMAC-Signature']).toBeTruthy();
+  });
+
+  it('does not retry a rate limit on a download', async () => {
+    const spy = vi.fn(async () =>
+      Promise.resolve(new Response(JSON.stringify({ error: { code: 'RATE_LIMIT' } }), { status: 429 })),
+    );
+    vi.stubGlobal('fetch', spy);
+
+    const client = new ProofAgeClient(baseConfig);
+
+    await expect(client.verifications('ver_1').downloadMedia('med_1')).rejects.toThrow();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces a 404 for media that is gone', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { code: 'MEDIA_NOT_FOUND', message: 'Media not found.' } }), {
+            status: 404,
+          }),
+        ),
+      ),
+    );
+
+    const client = new ProofAgeClient(baseConfig);
+
+    await expect(client.verifications('ver_1').downloadMedia('med_1')).rejects.toMatchObject({ statusCode: 404, errorData: { code: 'MEDIA_NOT_FOUND' } });
+  });
+
+  it('requires a verification id', async () => {
+    const client = new ProofAgeClient(baseConfig);
+
+    await expect(client.verifications().downloadMedia('med_1')).rejects.toThrow('Verification ID is required');
+  });
+});
