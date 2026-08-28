@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Support policy, same rule as the Laravel client: test what upstream still
+    # supports, nothing more.
+    #
+    #   * A Node line leaves the matrix when it reaches end-of-life.
+    #   * A new line joins when it becomes LTS, not when it becomes Current —
+    #     nodejs.org is explicit that production should run Active or
+    #     Maintenance LTS only.
+    #
+    # Reviewed 2026-08-28 (nodejs.org/en/about/previous-releases):
+    #   18, 20  end-of-life        -> dropped, engines raised to >=22
+    #   22 Jod  LTS                -> tested
+    #   24 Krypton LTS             -> tested, and what publish.yml releases on
+    #   26      Current until Oct  -> add when it goes LTS
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
+
+    name: Node ${{ matrix.node-version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build package
+        run: npm run build

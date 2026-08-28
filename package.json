@@ -31,7 +31,7 @@
     "sync-spec": "node scripts/sync-spec.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
