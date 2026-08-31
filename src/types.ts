@@ -35,9 +35,33 @@ export interface UploadMediaPayload {
 }
 
 /**
+ * Why a face is being blocked. Optional over the API and mandatory in the
+ * ProofAge consoles, so a block sent without one cannot be told apart from an
+ * automated block when the blocklist is reported on — send it whenever a person
+ * made the decision.
+ *
+ * - `presentation_attack` — the selfie or document was photographed from a screen, a print, or a mask
+ * - `fraudulent_document` — the document is forged, edited, or not a real identity document
+ * - `scam_or_abuse` — the identity may be genuine; the person is blocked for what they did on your platform
+ * - `underage` — the person is below the age the workspace verifies for
+ * - `other` — anything the codes above do not cover; explain it in `reason`
+ */
+export const BLOCK_FACE_REASON_CODES = [
+  'presentation_attack',
+  'fraudulent_document',
+  'scam_or_abuse',
+  'underage',
+  'other',
+] as const;
+
+export type BlockFaceReasonCode = (typeof BLOCK_FACE_REASON_CODES)[number];
+
+/**
  * POST /v1/verifications/{id}/blocked-face body.
  */
 export interface BlockFacePayload {
+  reason_code?: BlockFaceReasonCode;
+  /** Free-text detail, truncated to 1000 characters rather than rejected. */
   reason?: string;
 }
 

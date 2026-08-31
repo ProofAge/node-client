@@ -17,6 +17,7 @@ export {
 } from './hmac.js';
 export { generateWebhookSignature, handleWebhook, verifyWebhookSignature, webhookHandler } from './webhook.js';
 export type { HandleWebhookOptions, HandleWebhookResult, VerifyWebhookSignatureInput } from './webhook.js';
+export { BLOCK_FACE_REASON_CODES } from './types.js';
 export { VerificationResource } from './resources/verifications.js';
 export { WorkspaceResource } from './resources/workspace.js';
 export type {
@@ -25,6 +26,7 @@ export type {
   AgeEstimation,
   ApiErrorBody,
   BlockFacePayload,
+  BlockFaceReasonCode,
   ConsentInfo,
   CreatedVerification,
   CreateVerificationPayload,

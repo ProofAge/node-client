@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { BLOCK_FACE_REASON_CODES } from '../src/types.js';
 import { describe, expect, it } from 'vitest';
 
 interface OperationContract {
@@ -112,7 +113,7 @@ const OPERATIONS: Record<string, OperationContract> = {
   'verifications.blockFace': {
     method: 'POST',
     path: '/verifications/{verification}/blocked-face',
-    request: ['reason'],
+    request: ['reason', 'reason_code'],
     response: [],
   },
 };
@@ -217,5 +218,12 @@ describe('API contract drift', () => {
       const token = `${op.method} ${op.path}`;
       expect(doc.includes(token), `AGENTS.md missing [${name}] (${token})`).toBe(true);
     }
+  });
+  it('the reason codes the SDK offers are the ones the API accepts', () => {
+    // A sixth code added upstream must not sit unnoticed in a union that
+    // silently rejects it at the type level.
+    expect(BLOCK_FACE_REASON_CODES).toEqual(
+      (spec.components as { schemas: Record<string, { enum: string[] }> }).schemas.BlockedFaceReasonCode.enum,
+    );
   });
 });

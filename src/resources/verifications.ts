@@ -125,7 +125,10 @@ export class VerificationResource {
 
   /**
    * Block the verification face for future AML checks. The API responds 204 No Content.
-   * Optionally pass `{ reason }`.
+   *
+   * Pass `reason_code` whenever a person made the decision — it is what blocklist
+   * reporting counts, and the ProofAge consoles require it. `reason` is optional
+   * free-text detail beside it.
    */
   async blockFace(data: BlockFacePayload = {}): Promise<null> {
     if (!this.verificationId) {

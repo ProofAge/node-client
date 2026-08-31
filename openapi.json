@@ -739,7 +739,7 @@
         "/verifications/{verification}/blocked-face": {
             "post": {
                 "operationId": "blockVerificationFace",
-                "description": "Adds the verification selfie face embedding to the workspace tenant blocklist.\nFuture verification attempts with a matching face will be declined by the AML blocklist step.\nOptional `reason` text is stored with the blocked face and truncated to 1000 characters.",
+                "description": "Adds the verification selfie face embedding to the workspace tenant blocklist.\nFuture verification attempts with a matching face will be declined by the AML blocklist step.\nOptional `reason` text is stored with the blocked face and truncated to 1000 characters.\n\nOptional `reason_code` classifies the block, and is what reporting counts: one of\n`presentation_attack`, `fraudulent_document`, `scam_or_abuse`, `underage`, `other`.\nSend it whenever a person made the decision \u2014 the admin consoles require it, so a\nblock that arrives without one cannot be told apart from an automated one.",
                 "summary": "Block a verification face",
                 "tags": [
                     "Verification"
@@ -866,7 +866,24 @@
         "schemas": {
             "BlockVerificationFaceRequest": {
                 "type": "object",
+                "properties": {
+                    "reason_code": {
+                        "$ref": "#/components/schemas/BlockedFaceReasonCode"
+                    }
+                },
                 "title": "BlockVerificationFaceRequest"
+            },
+            "BlockedFaceReasonCode": {
+                "type": "string",
+                "description": "Why a person put this face on the blocklist. The admin consoles require one; the public API accepts it optionally, and propagated device matches carry none.\n",
+                "enum": [
+                    "presentation_attack",
+                    "fraudulent_document",
+                    "scam_or_abuse",
+                    "underage",
+                    "other"
+                ],
+                "title": "BlockedFaceReasonCode"
             },
             "StoreVerificationConsentRequest": {
                 "type": "object",
