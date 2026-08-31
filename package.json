@@ -28,7 +28,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
-    "sync-spec": "node scripts/sync-spec.mjs"
+    "sync-spec": "node scripts/sync-spec.mjs",
+    "check-release": "node scripts/check-release.mjs"
   },
   "engines": {
     "node": ">=22"
