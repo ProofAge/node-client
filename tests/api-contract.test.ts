@@ -6,7 +6,14 @@ interface OperationContract {
   method: string;
   path: string;
   request: string[];
+  /** Top-level response fields; empty when the SDK resolves the call to null or a stream. */
   response: string[];
+  /**
+   * The success status whose body the SDK receives, when the operation documents more than
+   * one. createVerification also documents a 200 compact session response, sent only to the
+   * hosted widget's native-client header, which this SDK never sends.
+   */
+  responseStatus?: string;
 }
 
 /**
@@ -43,7 +50,8 @@ const OPERATIONS: Record<string, OperationContract> = {
   'verifications.create': {
     method: 'POST',
     path: '/verifications',
-    request: ['fingerprint', 'callback_url', 'external_id', 'external_metadata', 'metadata'],
+    request: ['fingerprint', 'callback_url', 'external_id', 'external_metadata', 'metadata', 'page_url'],
+    responseStatus: '201',
     response: [
       'id',
       'external_id',
@@ -51,6 +59,8 @@ const OPERATIONS: Record<string, OperationContract> = {
       'redirect_url',
       'status',
       'reason',
+      'duplicate_check',
+      'erasure',
       'consent_accepted_at',
       'created_at',
       'updated_at',
@@ -72,6 +82,7 @@ const OPERATIONS: Record<string, OperationContract> = {
       'created_at',
       'updated_at',
       'duplicate_check',
+      'erasure',
     ],
   },
   'verifications.acceptConsent': {
@@ -84,13 +95,13 @@ const OPERATIONS: Record<string, OperationContract> = {
     method: 'POST',
     path: '/verifications/{verification}/media',
     request: ['file', 'type', 'side', 'document', 'fingerprint', 'head_turn_step', 'capture_resolution', 'device_info', 'liveness_telemetry'],
-    response: ['message'],
+    response: [],
   },
   'verifications.submit': {
     method: 'POST',
     path: '/verifications/{verification}/submit',
     request: [],
-    response: ['message'],
+    response: [],
   },
   'verifications.document': {
     method: 'GET',
@@ -126,7 +137,10 @@ const spec = JSON.parse(readFileSync(new URL('../openapi.json', import.meta.url)
   components?: { schemas?: Record<string, Json> };
 };
 
-/** Top-level property names of an OpenAPI schema, resolving $ref and merging allOf. */
+/**
+ * Top-level property names of an OpenAPI schema, resolving $ref and merging allOf, anyOf and
+ * oneOf (a union contributes every field any branch can carry).
+ */
 function schemaProperties(schema: Json): string[] {
   if (!schema || typeof schema !== 'object') {
     return [];
@@ -136,9 +150,11 @@ function schemaProperties(schema: Json): string[] {
     return schemaProperties(spec.components?.schemas?.[name]);
   }
   let props: string[] = [];
-  if (Array.isArray(schema.allOf)) {
-    for (const sub of schema.allOf) {
-      props = props.concat(schemaProperties(sub));
+  for (const combinator of ['allOf', 'anyOf', 'oneOf']) {
+    if (Array.isArray(schema[combinator])) {
+      for (const sub of schema[combinator]) {
+        props = props.concat(schemaProperties(sub));
+      }
     }
   }
   if (schema.properties && typeof schema.properties === 'object') {
@@ -148,15 +164,15 @@ function schemaProperties(schema: Json): string[] {
 }
 
 function requestProperties(path: string, method: string): string[] {
-  const op = spec.paths[path]?.[method.toLowerCase()];
-  return schemaProperties(op?.requestBody?.content?.['application/json']?.schema ?? {});
+  const content = spec.paths[path]?.[method.toLowerCase()]?.requestBody?.content ?? {};
+  return schemaProperties(content['application/json']?.schema ?? content['multipart/form-data']?.schema ?? {});
 }
 
-function responseProperties(path: string, method: string): string[] {
+function responseProperties(path: string, method: string, status?: string): string[] {
   const op = spec.paths[path]?.[method.toLowerCase()];
   const responses: Record<string, Json> = op?.responses ?? {};
   for (const [code, resp] of Object.entries(responses)) {
-    if (!code.startsWith('2')) {
+    if (!code.startsWith('2') || (status !== undefined && code !== status)) {
       continue;
     }
     const schema = resp?.content?.['application/json']?.schema;
@@ -200,7 +216,7 @@ describe('API contract drift', () => {
   it('response fields match the spec for describable endpoints', () => {
     const checked: string[] = [];
     for (const [name, op] of Object.entries(OPERATIONS)) {
-      const props = responseProperties(op.path, op.method);
+      const props = responseProperties(op.path, op.method, op.responseStatus);
       if (props.length === 0) {
         // Scramble cannot describe this response; its shape is pinned by the
         // authored interface in src/types.ts and the client tests instead.
@@ -209,7 +225,27 @@ describe('API contract drift', () => {
       expect(sorted(props), `response fields for [${name}]`).toEqual(sorted(op.response));
       checked.push(name);
     }
-    expect(sorted(checked)).toEqual(['verifications.document', 'verifications.estimation', 'verifications.find', 'workspace.get']);
+    expect(sorted(checked)).toEqual([
+      'verifications.acceptConsent',
+      'verifications.create',
+      'verifications.document',
+      'verifications.estimation',
+      'verifications.find',
+      'workspace.get',
+      'workspace.getConsent',
+    ]);
+  });
+
+  it('the calls the SDK resolves to null answer without a JSON body', () => {
+    for (const name of ['verifications.uploadMedia', 'verifications.submit', 'verifications.blockFace']) {
+      const op = OPERATIONS[name]!;
+      const responses: Record<string, Json> = spec.paths[op.path]?.[op.method.toLowerCase()]?.responses ?? {};
+      const success = Object.entries(responses).filter(([code]) => code.startsWith('2'));
+      expect(success.length, `[${name}] documents no success response`).toBeGreaterThan(0);
+      for (const [code, resp] of success) {
+        expect(resp?.content?.['application/json'], `[${name}] ${code} carries a JSON body`).toBeUndefined();
+      }
+    }
   });
 
   it('AGENTS.md documents every endpoint', () => {
