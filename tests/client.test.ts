@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProofAgeClient } from '../src/client.js';
 import { AuthenticationError, ProofAgeError, ValidationError } from '../src/errors.js';
+import type { UploadMediaPayload } from '../src/types.js';
 
 function mockFetch(status: number, body: unknown) {
   vi.stubGlobal(
@@ -288,6 +289,9 @@ describe('media download', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers['X-API-Key']).toBe('test-api-key');
     expect(headers['X-HMAC-Signature']).toBeTruthy();
+    // JSON first, so the API renders its errors as JSON (Laravel expectsJson()); a successful
+    // download streams the file whatever Accept says.
+    expect(headers.Accept).toBe('application/json, */*;q=0.8');
   });
 
   it('does not retry a rate limit on a download', async () => {
@@ -323,5 +327,274 @@ describe('media download', () => {
     const client = new ProofAgeClient(baseConfig);
 
     await expect(client.verifications().downloadMedia('med_1')).rejects.toThrow('Verification ID is required');
+  });
+});
+
+describe('base URL', () => {
+  const keys = { apiKey: 'pk', secretKey: 'sk' };
+
+  it('defaults to the API origin', () => {
+    expect(new ProofAgeClient(keys).getConfig().baseUrl).toBe('https://api.proofage.xyz');
+  });
+
+  it('strips a trailing /v1 copied from the OpenAPI servers entry', () => {
+    expect(new ProofAgeClient({ ...keys, baseUrl: 'https://api.proofage.xyz/v1/' }).getConfig().baseUrl).toBe(
+      'https://api.proofage.xyz',
+    );
+  });
+
+  it('keeps a proxy path prefix', () => {
+    expect(new ProofAgeClient({ ...keys, baseUrl: 'https://gw.example.com/proofage/' }).getConfig().baseUrl).toBe(
+      'https://gw.example.com/proofage',
+    );
+  });
+
+  it('rejects something that is not a URL', () => {
+    expect(() => new ProofAgeClient({ ...keys, baseUrl: 'api.proofage.xyz' })).toThrow(/Invalid baseUrl/);
+  });
+});
+
+describe('error shapes', () => {
+  const baseConfig = { apiKey: 'pk', secretKey: 'sk', baseUrl: 'https://api.test.com', retryAttempts: 1 };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function caught(promise: Promise<unknown>): Promise<ProofAgeError> {
+    try {
+      await promise;
+    } catch (e) {
+      return e as ProofAgeError;
+    }
+    throw new Error('expected a rejection');
+  }
+
+  it('unwraps { error: { code, message } }', async () => {
+    mockFetch(401, { error: { code: 'INVALID_SIGNATURE', message: 'HMAC signature is invalid' } });
+    const e = await caught(new ProofAgeClient(baseConfig).workspace().get());
+    expect(e).toBeInstanceOf(AuthenticationError);
+    expect(e.message).toBe('HMAC signature is invalid');
+    expect(e.code).toBe('INVALID_SIGNATURE');
+    expect(e.getErrorCode()).toBe('INVALID_SIGNATURE');
+  });
+
+  it('keeps a flat 402 body whole, trial fields included', async () => {
+    mockFetch(402, {
+      code: 'PAYMENT_METHOD_REQUIRED',
+      message: 'A payment method is required to create verifications.',
+      free_verifications_remaining: 0,
+      trial_ends_at: null,
+      trial_active: false,
+    });
+    const e = await caught(new ProofAgeClient(baseConfig).verifications().create({}));
+    expect(e).toBeInstanceOf(ProofAgeError);
+    expect(e.statusCode).toBe(402);
+    expect(e.code).toBe('PAYMENT_METHOD_REQUIRED');
+    expect(e.message).toBe('A payment method is required to create verifications.');
+    expect(e.errorData).toMatchObject({ free_verifications_remaining: 0, trial_active: false });
+  });
+
+  it('reads a flat media-quality 422 as a ValidationError with its code', async () => {
+    mockFetch(422, { code: 'FACE_NOT_FOUND', message: 'Face validation failed.' });
+    const e = await caught(
+      new ProofAgeClient(baseConfig).verifications('ver_1').uploadMedia({ type: 'selfie', file: Buffer.from('x') }),
+    );
+    expect(e).toBeInstanceOf(ValidationError);
+    expect(e.code).toBe('FACE_NOT_FOUND');
+    expect(e.message).toBe('Face validation failed.');
+    expect((e as ValidationError).getErrors()).toEqual({});
+  });
+
+  it('reads Laravel { message, errors } validation bodies', async () => {
+    mockFetch(422, {
+      message: 'The side field is required when type is document.',
+      errors: { side: ['The side field is required when type is document.'] },
+    });
+    const e = await caught(new ProofAgeClient(baseConfig).verifications().create({}));
+    expect(e).toBeInstanceOf(ValidationError);
+    expect(e.message).toBe('The side field is required when type is document.');
+    expect((e as ValidationError).getErrors()).toEqual({ side: ['The side field is required when type is document.'] });
+    expect(e.code).toBeUndefined();
+  });
+
+  it('reads a bare { message } 404', async () => {
+    mockFetch(404, { message: 'Resource not found' });
+    const e = await caught(new ProofAgeClient(baseConfig).verifications().find('nope'));
+    expect(e.statusCode).toBe(404);
+    expect(e.message).toBe('Resource not found');
+    expect(e.errorData).toEqual({ message: 'Resource not found' });
+  });
+
+  it('reads a bare { message } 403', async () => {
+    mockFetch(403, { message: 'Access denied to this verification.' });
+    const e = await caught(new ProofAgeClient(baseConfig).verifications('v').document());
+    expect(e.statusCode).toBe(403);
+    expect(e.message).toBe('Access denied to this verification.');
+  });
+
+  it('falls back to the status and a snippet for a non-JSON error body', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>Bad Gateway</html>', { status: 502 })));
+    const e = await caught(new ProofAgeClient(baseConfig).workspace().get());
+    expect(e.message).toBe('HTTP 502: <html>Bad Gateway</html>');
+    expect(e.errorData).toBeUndefined();
+  });
+});
+
+describe('response bodies', () => {
+  const baseConfig = { apiKey: 'pk', secretKey: 'sk', baseUrl: 'https://api.test.com', retryAttempts: 1 };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('resolves uploadMedia() and submit() to null on the empty 200', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 200 })));
+    const v = new ProofAgeClient(baseConfig).verifications('ver_1');
+    await expect(v.uploadMedia({ type: 'selfie', file: Buffer.from('x') })).resolves.toBeNull();
+    await expect(v.submit()).resolves.toBeNull();
+  });
+
+  it('throws on a non-empty 2xx body that is not JSON (wrong baseUrl)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<!doctype html><title>Home</title>', { status: 200, headers: { 'Content-Type': 'text/html' } })),
+    );
+    const e = await new ProofAgeClient(baseConfig).workspace().get().catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ProofAgeError);
+    expect((e as ProofAgeError).message).toMatch(/non-JSON body.*text\/html.*baseUrl/);
+  });
+});
+
+describe('uploadMedia', () => {
+  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 1 };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('sends and signs a document upload exactly as the server recomputes it', async () => {
+    const spy = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', spy);
+
+    await new ProofAgeClient(baseConfig).verifications('ver_123').uploadMedia({
+      type: 'document',
+      side: 'front',
+      document: 'passport',
+      file: Buffer.from('fake-image-bytes'),
+      filename: 'front.jpg',
+      head_turn_step: 2,
+      device_info: { platform: 'MacIntel', ua: 'Mozilla/5.0 (X11)' },
+      fingerprint: null,
+    });
+
+    const [url, init] = fetchCall(spy);
+    expect(url).toBe('https://api.test.com/v1/verifications/ver_123/media');
+    const form = init.body as FormData;
+    expect(form.get('type')).toBe('document');
+    expect(form.get('side')).toBe('front');
+    expect(form.get('document')).toBe('passport');
+    expect(form.get('head_turn_step')).toBe('2');
+    expect(form.get('device_info')).toBe('{"platform":"MacIntel","ua":"Mozilla/5.0 (X11)"}');
+    expect(form.has('fingerprint')).toBe(false);
+    expect((form.get('file') as File).name).toBe('front.jpg');
+
+    // PHP, with the middleware's algorithm over those same fields:
+    //   ksort($f); $q = http_build_query($f, '', '&', PHP_QUERY_RFC3986);
+    //   hash_hmac('sha256', "POST/v1/verifications/ver_123/media\n$q\n".hash('sha256', 'fake-image-bytes'), 'test-secret-key')
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-HMAC-Signature']).toBe('d04610352d2f5738d33217ac4c7395c701ee3f0c885822b625830d569f894fda');
+  });
+
+  it('requires side and document on a document upload at the type level', () => {
+    const file = Buffer.from('x');
+    // @ts-expect-error — a document upload without side/document would answer 422
+    const missing: UploadMediaPayload = { type: 'document', file };
+    // @ts-expect-error — side is only meaningful for documents
+    const stray: UploadMediaPayload = { type: 'selfie', side: 'front', file };
+    const ok: UploadMediaPayload = { type: 'document', side: 'back', document: 'driver_license', file };
+    expect([missing, stray, ok]).toHaveLength(3);
+  });
+});
+
+describe('retry policy', () => {
+  const baseConfig = { apiKey: 'pk', secretKey: 'sk', baseUrl: 'https://api.test.com', retryAttempts: 3, retryDelay: 1 };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function networkError(code: string): TypeError {
+    return Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(code), { code }) });
+  }
+
+  it('does not retry a POST on 5xx', async () => {
+    const spy = vi.fn(async () => new Response(JSON.stringify({ error: { message: 'down' } }), { status: 503 }));
+    vi.stubGlobal('fetch', spy);
+    await expect(new ProofAgeClient(baseConfig).verifications().create({})).rejects.toThrow(ProofAgeError);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a POST on a timeout', async () => {
+    const spy = vi.fn(async () => {
+      throw new DOMException('This operation was aborted', 'AbortError');
+    });
+    vi.stubGlobal('fetch', spy);
+    await expect(new ProofAgeClient(baseConfig).verifications('v').submit()).rejects.toThrow('aborted');
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a POST whose connection dropped mid-request', async () => {
+    const spy = vi.fn().mockRejectedValue(networkError('ECONNRESET'));
+    vi.stubGlobal('fetch', spy);
+    await expect(new ProofAgeClient(baseConfig).verifications().create({})).rejects.toThrow('fetch failed');
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a POST that never reached the server', async () => {
+    const spy = vi
+      .fn()
+      .mockRejectedValueOnce(networkError('ECONNREFUSED'))
+      .mockRejectedValueOnce(
+        Object.assign(new TypeError('fetch failed'), {
+          cause: new AggregateError([networkError('ENOTFOUND').cause, networkError('ECONNREFUSED').cause]),
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'ver_1' }), { status: 201 }));
+    vi.stubGlobal('fetch', spy);
+    const v = await new ProofAgeClient(baseConfig).verifications().create({});
+    expect(v?.id).toBe('ver_1');
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries a POST on 429, honouring Retry-After over the backoff', async () => {
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: 'RATE_LIMIT' } }), { status: 429, headers: { 'Retry-After': '0' } }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'ver_1' }), { status: 201 }));
+    vi.stubGlobal('fetch', spy);
+
+    // A 60 s backoff would time the test out; Retry-After: 0 is what lets it finish.
+    const client = new ProofAgeClient({ ...baseConfig, retryDelay: 60_000 });
+    const v = await client.verifications().create({});
+    expect(v?.id).toBe('ver_1');
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('still retries a GET on a timeout', async () => {
+    const spy = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException('This operation was aborted', 'AbortError'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'ws' }), { status: 200 }));
+    vi.stubGlobal('fetch', spy);
+    const ws = await new ProofAgeClient(baseConfig).workspace().get();
+    expect(ws?.id).toBe('ws');
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,21 +1,25 @@
-import type { ApiErrorBody } from './types.js';
+import type { ApiErrorData } from './types.js';
+
+export interface ProofAgeErrorOptions {
+  responseBody?: string;
+  errorData?: ApiErrorData;
+  cause?: unknown;
+}
 
 export class ProofAgeError extends Error {
   readonly statusCode: number;
 
   readonly responseBody?: string;
 
-  readonly errorData: ApiErrorBody['error'];
+  /**
+   * The error detail, normalized across the API's error shapes: `{ error: {...} }` is
+   * unwrapped, a flat `{ code, message, ...extra }` body is kept whole (so e.g.
+   * `free_verifications_remaining` on a 402 is here), and a Laravel `{ message }` body
+   * yields `{ message }`. Undefined when the body carried no JSON object.
+   */
+  readonly errorData: ApiErrorData | undefined;
 
-  constructor(
-    message: string,
-    statusCode: number,
-    options?: {
-      responseBody?: string;
-      errorData?: ApiErrorBody['error'];
-      cause?: unknown;
-    },
-  ) {
+  constructor(message: string, statusCode: number, options?: ProofAgeErrorOptions) {
     super(message, { cause: options?.cause });
     this.name = 'ProofAgeError';
     this.statusCode = statusCode;
@@ -23,17 +27,19 @@ export class ProofAgeError extends Error {
     this.errorData = options?.errorData;
   }
 
+  /** The API's machine-readable error code (e.g. `INVALID_SIGNATURE`, `FACE_NOT_FOUND`), when it sent one. */
+  get code(): string | undefined {
+    const code = this.errorData?.code;
+    return typeof code === 'string' ? code : undefined;
+  }
+
   getErrorCode(): string | undefined {
-    return this.errorData?.code as string | undefined;
+    return this.code;
   }
 }
 
 export class AuthenticationError extends ProofAgeError {
-  constructor(
-    message: string,
-    statusCode: number,
-    options?: { responseBody?: string; errorData?: ApiErrorBody['error']; cause?: unknown },
-  ) {
+  constructor(message: string, statusCode: number, options?: ProofAgeErrorOptions) {
     super(message, statusCode, options);
     this.name = 'AuthenticationError';
   }
@@ -46,7 +52,7 @@ export class ValidationError extends ProofAgeError {
     message: string,
     statusCode: number,
     validationErrors: Record<string, string[]>,
-    options?: { responseBody?: string; errorData?: ApiErrorBody['error']; cause?: unknown },
+    options?: ProofAgeErrorOptions,
   ) {
     super(message, statusCode, options);
     this.name = 'ValidationError';

@@ -5,6 +5,11 @@
 export interface ProofAgeConfig {
   apiKey?: string;
   secretKey?: string;
+  /**
+   * The API origin, without the version path: `https://api.proofage.xyz` (the default).
+   * The client appends `/{version}` itself; a trailing `/v1` is stripped so a URL copied
+   * from the OpenAPI `servers` entry still works.
+   */
   baseUrl?: string;
   version?: string;
   timeout?: number;
@@ -21,18 +26,68 @@ export interface CreateVerificationPayload {
   external_id?: string;
   external_metadata?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  /** Page the verification was started on (<= 8192 chars); only scheme, host and path are kept. */
+  page_url?: string;
 }
 
+/** Browser details sent with consent; every field is optional. */
+export interface ConsentDevice {
+  platform?: string | null;
+  screen?: string | null;
+  language?: string | null;
+  timezone?: string | null;
+  hardware_concurrency?: number | null;
+  device_memory?: number | null;
+}
+
+export type CameraPermissionState = 'granted' | 'denied' | 'prompt' | 'unsupported';
+
+/**
+ * POST /v1/verifications/{id}/consent body. `consent_version_id` and `text_sha256` come from
+ * `client.workspace().getConsent()` (`id` and `text_sha256`).
+ */
 export interface AcceptConsentPayload {
-  consent_version_id: string;
+  consent_version_id: number;
+  /** 64 hex characters. */
   text_sha256: string;
+  device?: ConsentDevice | null;
+  in_app_browser?: string | null;
+  /** Unrecognised values are nulled by the API rather than rejected. */
+  camera_permission?: CameraPermissionState | null;
+  camera_policy_allowed?: boolean | null;
+  in_iframe?: boolean | null;
+  referrer?: string | null;
 }
 
-export interface UploadMediaPayload {
-  type: string;
+export type MediaUploadType = 'selfie' | 'liveness_selfie' | 'document';
+
+export type DocumentSide = 'front' | 'back';
+
+export type DocumentType = 'id' | 'driver_license' | 'passport' | 'residence_permit';
+
+interface UploadMediaCommon {
+  /** The image bytes (10 MB max; documents need at least 200px on each edge). */
   file: Buffer | Uint8Array;
+  /** Filename sent with the multipart part. Defaults to `upload.bin`. */
   filename?: string;
+  /** SHA-256 hex (64 chars) device fingerprint. */
+  fingerprint?: string | null;
+  /** Head-turn liveness step, 0..10. */
+  head_turn_step?: number | null;
+  /** JSON string, or an object the client JSON-encodes: `{ requested: {width,height}, actual: {width,height} }`. */
+  capture_resolution?: string | Record<string, unknown> | null;
+  /** JSON string, or an object the client JSON-encodes (user_agent, platform, screen, language, timezone, ...). */
+  device_info?: string | Record<string, unknown> | null;
+  /** JSON string, or an array the client JSON-encodes; malformed telemetry is dropped by the API, never rejected. */
+  liveness_telemetry?: string | unknown[] | null;
 }
+
+/**
+ * POST /v1/verifications/{id}/media (multipart). A document upload needs `side` and `document`.
+ */
+export type UploadMediaPayload =
+  | (UploadMediaCommon & { type: 'selfie' | 'liveness_selfie'; side?: never; document?: never })
+  | (UploadMediaCommon & { type: 'document'; side: DocumentSide; document: DocumentType });
 
 /**
  * Why a face is being blocked. Optional over the API and mandatory in the
@@ -95,20 +150,63 @@ export interface ConsentInfo {
   url: string;
 }
 
+/**
+ * Known verification statuses. `documents_required` is surfaced from the latest attempt's
+ * state rather than being a verification status. The type stays open (`string & {}`) so a
+ * status added upstream does not break compilation — treat unknown values gracefully.
+ */
+export type VerificationStatus =
+  | 'created'
+  | 'started'
+  | 'submitted'
+  | 'resubmission_requested'
+  | 'approved'
+  | 'declined'
+  | 'abandoned'
+  | 'expired'
+  | 'review'
+  | 'documents_required'
+  | (string & {});
+
+/** Duplicate-face check on the verification's latest attempt. */
+export interface DuplicateCheck {
+  checked: boolean;
+  duplicate_count: number;
+  duplicates: Array<{
+    verification_id: string;
+    external_id: string | null;
+    similarity_score: number;
+    verified_at: string | null;
+  }>;
+}
+
+/** Set once the verification's personal data has been erased; null otherwise. */
+export interface Erasure {
+  erased_at: string;
+  /** Currently always `personal_data`. */
+  scope: string;
+  /** Erasure reason code, e.g. `data_subject_request`, `retention_policy`; null if unrecorded. */
+  reason: string | null;
+  /** Who asked: `customer`, `proofage` or `retention`; null if unrecorded. */
+  requested_via: string | null;
+}
+
 /** GET /v1/verifications/{id} */
 export interface Verification {
   id: string;
   external_id: string | null;
   external_metadata: Record<string, unknown> | null;
   redirect_url: string | null;
-  status: string;
+  status: VerificationStatus;
   reason: string | null;
+  duplicate_check: DuplicateCheck;
+  erasure: Erasure | null;
   consent_accepted_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
-/** POST /v1/verifications also returns the hosted session `url`. */
+/** POST /v1/verifications (201) also returns the hosted session `url`. */
 export interface CreatedVerification extends Verification {
   url: string;
 }
@@ -117,11 +215,6 @@ export interface CreatedVerification extends Verification {
 export interface AcceptConsentResult {
   consent_version_id: number;
   consent_accepted_at: string;
-}
-
-/** POST /v1/verifications/{id}/media and POST /v1/verifications/{id}/submit */
-export interface MessageResult {
-  message: string;
 }
 
 /** GET /v1/verifications/{id}/document */
@@ -160,28 +253,72 @@ export interface AgeEstimation {
   } | null;
 }
 
+/** Who made a manual moderation decision (present on webhooks after a console approve/decline). */
+export interface ManualModeration {
+  action: 'approve' | 'decline';
+  reason: string;
+  /** `tenant_admin` or `landlord_admin`. */
+  source: string;
+  performed_by: {
+    id: number;
+    name: string | null;
+    email: string | null;
+    role: string | null;
+  };
+  /** Only on `approve`: the status the verification had before it was approved. */
+  source_status?: string;
+  /** Only on `approve`: the reason code the verification had before it was approved. */
+  source_reason?: string | null;
+}
+
 /**
  * Webhook JSON body (ProofAge outbound webhook).
  */
 export interface WebhookPayload {
   verification_id: string;
-  status: string;
-  external_id?: string | null;
-  external_metadata?: Record<string, unknown> | null;
-  reason?: string | null;
+  status: VerificationStatus;
+  external_id: string | null;
+  external_metadata: Record<string, unknown> | null;
+  /** Always present; a reason code only on `resubmission_requested` / `declined`, otherwise null. */
+  reason: string | null;
   timestamp: string;
-  duplicate_detected?: boolean;
+  /** Only when a duplicate face was found. */
+  duplicate_detected?: true;
+  /** Only when a duplicate face was found. */
+  duplicate_count?: number;
+  /** Only when a duplicate face was found: the first duplicate. */
   duplicate_of?: {
     verification_id: string;
-    external_id?: string | null;
+    external_id: string | null;
   };
+  /** Technical signals (ip_address, ip_country_code, ip_timezone, device_timezone, ...), when any were collected. */
+  fingerprint_signals?: Record<string, unknown>;
+  manual_moderation?: ManualModeration;
 }
 
+/**
+ * Error bodies the API answers with. The shape depends on where the request was refused:
+ * - `{ error: { code, message } }` — most API errors (auth, rate limit, submit, media download);
+ * - `{ code, message, ...extra }` — flat: `402 PAYMENT_METHOD_REQUIRED` and media quality
+ *   rejections on upload (e.g. `422 FACE_NOT_FOUND`);
+ * - `{ message, errors }` — request validation (`422`);
+ * - `{ message }` — `403` / `404`.
+ */
 export interface ApiErrorBody {
   error?: {
     message?: string;
     code?: string;
     [key: string]: unknown;
   };
+  code?: string;
+  message?: string;
   errors?: Record<string, string[]>;
+  [key: string]: unknown;
+}
+
+/** The normalized error detail carried on `ProofAgeError.errorData`, whatever shape the API used. */
+export interface ApiErrorData {
+  message?: string;
+  code?: string;
+  [key: string]: unknown;
 }

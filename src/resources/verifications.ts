@@ -6,7 +6,6 @@ import type {
   BlockFacePayload,
   CreatedVerification,
   CreateVerificationPayload,
-  MessageResult,
   UploadMediaPayload,
   Verification,
   VerificationDocument,
@@ -47,27 +46,44 @@ export class VerificationResource {
     return (await res.json()) as AcceptConsentResult | null;
   }
 
-  async uploadMedia(data: UploadMediaPayload): Promise<MessageResult | null> {
+  /**
+   * Upload one image (multipart). Consent must be accepted first. A document upload needs
+   * `side` (`front` | `back`) and `document` (`id` | `driver_license` | `passport` |
+   * `residence_permit`).
+   *
+   * The API answers 200 with an empty body, so this resolves to `null`. A rejected image
+   * throws a `ValidationError` whose `code` says why (e.g. `FACE_NOT_FOUND`).
+   *
+   * Object-valued fields (`capture_resolution`, `device_info`, `liveness_telemetry`) are sent
+   * as JSON strings; `null`/`undefined` fields are not sent.
+   */
+  async uploadMedia(data: UploadMediaPayload): Promise<null> {
     if (!this.verificationId) {
       throw new TypeError('Verification ID is required');
     }
-    const { file, filename = 'upload.bin', type } = data;
+    const { file, filename = 'upload.bin', ...fields } = data;
     const buffer = Buffer.isBuffer(file) ? file : Buffer.from(file);
     const res = await this.client.makeRequest(
       'POST',
       `verifications/${this.verificationId}/media`,
-      { type },
+      fields as Record<string, unknown>,
       { file: { buffer, filename } },
     );
-    return (await res.json()) as MessageResult | null;
+    await res.json();
+    return null;
   }
 
-  async submit(): Promise<MessageResult | null> {
+  /**
+   * Submit the uploaded media for processing. The API answers 200 with an empty body, so this
+   * resolves to `null`; missing media throws a `ValidationError` (`MISSING_REQUIRED_MEDIA`).
+   */
+  async submit(): Promise<null> {
     if (!this.verificationId) {
       throw new TypeError('Verification ID is required');
     }
     const res = await this.client.makeRequest('POST', `verifications/${this.verificationId}/submit`, {});
-    return (await res.json()) as MessageResult | null;
+    await res.json();
+    return null;
   }
 
   async document(): Promise<VerificationDocument | null> {
@@ -139,6 +155,7 @@ export class VerificationResource {
       `verifications/${this.verificationId}/blocked-face`,
       data as Record<string, unknown>,
     );
-    return (await res.json()) as null;
+    await res.json();
+    return null;
   }
 }
