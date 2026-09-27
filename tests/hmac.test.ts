@@ -6,7 +6,9 @@ import {
   generateHmacSignature,
   generateHmacSignatureForFiles,
   phpHttpBuildQueryRfc3986,
+  rawUrlEncode,
   serializeJsonBody,
+  toMultipartFields,
 } from '../src/hmac.js';
 
 describe('serializeJsonBody', () => {
@@ -78,6 +80,50 @@ describe('phpHttpBuildQueryRfc3986', () => {
 
   it('returns empty string for empty object', () => {
     expect(phpHttpBuildQueryRfc3986({})).toBe('');
+  });
+
+  it("encodes ! ' ( ) * like PHP rawurlencode", () => {
+    expect(phpHttpBuildQueryRfc3986({ note: "it's (a)*b!~" })).toBe('note=it%27s%20%28a%29%2Ab%21~');
+  });
+});
+
+describe('rawUrlEncode', () => {
+  it('matches PHP rawurlencode on every printable ASCII character', () => {
+    // php -r 'echo rawurlencode(implode("", array_map("chr", range(32, 126))));'
+    const ascii = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).join('');
+    expect(rawUrlEncode(ascii)).toBe(
+      '%20%21%22%23%24%25%26%27%28%29%2A%2B%2C-.%2F0123456789%3A%3B%3C%3D%3E%3F%40ABCDEFGHIJKLMNOPQRSTUVWXYZ%5B%5C%5D%5E_%60abcdefghijklmnopqrstuvwxyz%7B%7C%7D~',
+    );
+  });
+
+  it('encodes UTF-8 bytes', () => {
+    expect(rawUrlEncode('Jürgen')).toBe('J%C3%BCrgen');
+  });
+});
+
+describe('toMultipartFields', () => {
+  it('drops null and undefined', () => {
+    expect(toMultipartFields({ a: 'x', b: null, c: undefined })).toEqual({ a: 'x' });
+  });
+
+  it('keeps empty strings (the API receives and signs them as-is)', () => {
+    expect(toMultipartFields({ a: '' })).toEqual({ a: '' });
+  });
+
+  it('stringifies numbers and sends booleans as 1/0', () => {
+    expect(toMultipartFields({ step: 3, ratio: 0.5, on: true, off: false })).toEqual({
+      step: '3',
+      ratio: '0.5',
+      on: '1',
+      off: '0',
+    });
+  });
+
+  it('JSON-encodes objects and arrays', () => {
+    expect(toMultipartFields({ device_info: { os: 'iOS' }, liveness_telemetry: [{ t_ms: 1 }] })).toEqual({
+      device_info: '{"os":"iOS"}',
+      liveness_telemetry: '[{"t_ms":1}]',
+    });
   });
 });
 

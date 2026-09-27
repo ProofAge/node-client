@@ -49,6 +49,46 @@ export function canonicalizeArrayForQuery(input: Record<string, unknown>): Recor
 }
 
 /**
+ * PHP `rawurlencode()`: RFC 3986 percent-encoding, leaving only `A-Z a-z 0-9 - _ . ~` bare.
+ * `encodeURIComponent` also leaves `! ' ( ) *` bare, which PHP encodes, so those are fixed up.
+ */
+export function rawUrlEncode(value: string): string {
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+/**
+ * Turn multipart form fields into the exact strings that go on the wire, so the client signs
+ * what it sends and the server (which signs the fields it receives) computes the same string:
+ *
+ * - `undefined` / `null` are dropped (not sent, not signed);
+ * - strings are sent as-is;
+ * - numbers and bigints are sent as `String(value)`;
+ * - booleans are sent as `"1"` / `"0"` (what Laravel's `boolean` rule accepts);
+ * - objects and arrays are sent as a JSON string (what the API's `json` fields expect).
+ */
+export function toMultipartFields(data: Record<string, unknown>): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+    if (typeof value === 'string') {
+      fields[key] = value;
+    } else if (typeof value === 'number' || typeof value === 'bigint') {
+      fields[key] = String(value);
+    } else if (typeof value === 'boolean') {
+      fields[key] = value ? '1' : '0';
+    } else {
+      fields[key] = JSON.stringify(value);
+    }
+  }
+  return fields;
+}
+
+/**
  * PHP `http_build_query($data, '', '&', PHP_QUERY_RFC3986)` for nested arrays/objects.
  * Field order follows k-sorted keys at each level (same as Laravel client).
  */
@@ -60,7 +100,7 @@ export function phpHttpBuildQueryRfc3986(data: Record<string, unknown>): string 
       return;
     }
     if (typeof value === 'boolean') {
-      parts.push(`${encodeURIComponent(prefix)}=${value ? '1' : '0'}`);
+      parts.push(`${rawUrlEncode(prefix)}=${value ? '1' : '0'}`);
       return;
     }
     if (Array.isArray(value)) {
@@ -76,7 +116,7 @@ export function phpHttpBuildQueryRfc3986(data: Record<string, unknown>): string 
       }
       return;
     }
-    parts.push(`${encodeURIComponent(prefix)}=${encodeURIComponent(String(value))}`);
+    parts.push(`${rawUrlEncode(prefix)}=${rawUrlEncode(String(value))}`);
   }
 
   const sorted = canonicalizeArrayForQuery(data);
