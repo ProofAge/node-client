@@ -12,7 +12,7 @@ This package provides a first-class Node.js integration: auto-configuration from
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 22+ (see `engines` in package.json)
 
 ## Installation
 
@@ -64,26 +64,85 @@ All options fall back to environment variables, then to defaults.
 |--------|---------|---------|-------------|
 | `apiKey` | `PROOFAGE_API_KEY` | — | Workspace API key |
 | `secretKey` | `PROOFAGE_SECRET_KEY` | — | Secret key for HMAC signing |
-| `baseUrl` | `PROOFAGE_BASE_URL` | `https://api.proofage.xyz` | API base URL |
+| `baseUrl` | `PROOFAGE_BASE_URL` | `https://api.proofage.xyz` | API **origin, without `/v1`** — the client appends the version. A trailing `/v1` is stripped. |
 | `version` | `PROOFAGE_VERSION` | `v1` | API version path segment |
 | `timeout` | `PROOFAGE_TIMEOUT` | `30000` | Request timeout (ms) |
-| `retryAttempts` | `PROOFAGE_RETRY_ATTEMPTS` | `3` | Retries for transient failures |
-| `retryDelay` | `PROOFAGE_RETRY_DELAY` | `1000` | Base delay between retries (ms) |
+| `retryAttempts` | `PROOFAGE_RETRY_ATTEMPTS` | `3` | Total attempts for transient failures (see below) |
+| `retryDelay` | `PROOFAGE_RETRY_DELAY` | `1000` | Base delay between retries (ms), multiplied by the attempt number |
+
+**Retries.** GET requests retry on 408, 429, 5xx, timeouts and network errors. POST requests
+(create, consent, upload, submit, block) retry **only** on 429 and on network errors raised
+before the request was sent (DNS failure, connection refused) — never on a 5xx or a timeout,
+where the server may already have acted, so a retry could create a second verification. A 429
+waits for the API's `Retry-After`. Media downloads never retry an HTTP status.
 
 ## API Methods
 
 - `client.workspace().get()` — `GET /v1/workspace`
 - `client.workspace().getConsent()` — `GET /v1/consent`
 - `client.verifications().create(body)` — `POST /v1/verifications`
-- `client.verifications(id).get()` — `GET /v1/verifications/{id}`
+- `client.verifications(id).get()` / `client.verifications().find(id)` — `GET /v1/verifications/{id}`
 - `client.verifications(id).acceptConsent(body)` — `POST /v1/verifications/{id}/consent`
-- `client.verifications(id).uploadMedia({ type, file, filename })` — `POST /v1/verifications/{id}/media` (multipart)
-- `client.verifications(id).submit()` — `POST /v1/verifications/{id}/submit`
+- `client.verifications(id).uploadMedia(payload)` — `POST /v1/verifications/{id}/media` (multipart; resolves to `null`)
+- `client.verifications(id).submit()` — `POST /v1/verifications/{id}/submit` (resolves to `null`)
 - `client.verifications(id).document()` — `GET /v1/verifications/{id}/document`
+- `client.verifications(id).downloadMedia(mediaId)` — `GET /v1/verifications/{id}/media/{mediaId}` (a web `ReadableStream`)
+- `client.verifications(id).downloadMediaTo(mediaId, path)` — same, streamed to a file; resolves to the path
 - `client.verifications(id).estimation()` — `GET /v1/verifications/{id}/estimation`
-- `client.verifications(id).blockFace({ reason })` — `POST /v1/verifications/{id}/blocked-face`
+- `client.verifications(id).blockFace({ reason_code, reason })` — `POST /v1/verifications/{id}/blocked-face`
 
 Request bodies use **snake_case** keys to match the ProofAge API. `callback_url` is optional — if omitted, the verification result is available via polling or webhook.
+
+### Server-side capture flow
+
+When your backend collects the images itself instead of sending the person to the hosted `url`:
+
+```typescript
+import { readFile } from 'node:fs/promises';
+
+const { id } = (await client.verifications().create({ external_id: 'user-42' }))!;
+const verification = client.verifications(id);
+
+const consent = (await client.workspace().getConsent())!;
+await verification.acceptConsent({
+  consent_version_id: consent.id,
+  text_sha256: consent.text_sha256,
+});
+
+await verification.uploadMedia({ type: 'selfie', file: await readFile('selfie.jpg'), filename: 'selfie.jpg' });
+await verification.uploadMedia({
+  type: 'document',
+  side: 'front',            // 'front' | 'back'
+  document: 'passport',     // 'id' | 'driver_license' | 'passport' | 'residence_permit'
+  file: await readFile('passport.jpg'),
+  filename: 'passport.jpg',
+});
+
+await verification.submit();
+```
+
+A rejected image throws a `ValidationError` whose `code` says why (e.g. `FACE_NOT_FOUND`).
+
+### Downloading media
+
+```typescript
+const result = await client.verifications(id).document();
+for (const media of result?.media ?? []) {
+  if (media.url === null) continue; // purged or past retention
+  await client.verifications(id).downloadMediaTo(media.id, `./${media.type}.jpg`);
+}
+```
+
+### Blocking a face
+
+```typescript
+await client.verifications(id).blockFace({
+  reason_code: 'presentation_attack', // see BLOCK_FACE_REASON_CODES
+  reason: 'Selfie was a photo of a screen',
+});
+```
+
+Send `reason_code` whenever a person made the decision; blocklist reporting counts it.
 
 Every method is fully typed (see `src/types.ts` / the package's type definitions), and the exact request/response shape of each endpoint is documented in `AGENTS.md` and the bundled `openapi.json`.
 
@@ -96,6 +155,7 @@ ProofAge sends `POST` requests with HMAC headers:
 | `X-Auth-Client` | Your workspace API key |
 | `X-HMAC-Signature` | HMAC-SHA256 hex digest of `{timestamp}.{rawJsonBody}` |
 | `X-Timestamp` | Unix timestamp (seconds) |
+| `X-ProofAge-Webhook-Delivery-Id` | Delivery id — the same on every automatic retry of one delivery, so use it to de-duplicate (a manual resend from the console gets a new id) |
 
 ### Drop-in handler (recommended)
 
@@ -159,9 +219,9 @@ Reads `PROOFAGE_API_KEY`, `PROOFAGE_SECRET_KEY`, and `PROOFAGE_BASE_URL` from `.
 
 ## Errors
 
-- `ProofAgeError` — generic API error (includes `statusCode` and parsed `error` object when present)
+- `ProofAgeError` — any API error: `statusCode`, `message`, `code` (the API's error code, e.g. `PAYMENT_METHOD_REQUIRED`, when sent), `errorData` (the parsed error detail — for a 402 it includes `free_verifications_remaining`, `trial_ends_at`, `trial_active`) and `responseBody`. Also thrown when a 2xx response is not JSON, which usually means `baseUrl` is wrong.
 - `AuthenticationError` — HTTP 401
-- `ValidationError` — HTTP 422 (`getErrors()` returns field errors)
+- `ValidationError` — HTTP 422 (`getErrors()` returns field errors; `code` is set for image rejections such as `FACE_NOT_FOUND`)
 - `WebhookVerificationError` — invalid or missing webhook signature / headers
 
 ## Additional Resources

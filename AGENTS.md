@@ -3,18 +3,48 @@
 This package wraps the ProofAge v1 HTTP API. Methods on `client.workspace()` and
 `client.verifications(id)` return decoded JSON, typed by the interfaces in `src/types.ts`
 (and re-exported from the package root). A machine-readable spec ships at `openapi.json`
-(authoritative for endpoints + request bodies; response schemas there are incomplete by
-generator limitation — the response interfaces below are authoritative for responses).
+(authoritative for endpoints and request bodies; it describes most response bodies too, and
+where it does not, the response interfaces below are authoritative).
 
-All requests send `X-API-Key` and `X-HMAC-Signature`. Base URL is `{baseUrl}/{version}`
-(defaults `https://api.proofage.xyz/v1`). Request bodies use **snake_case** to match the API.
+All requests send `X-API-Key` and `X-HMAC-Signature`. Request bodies use **snake_case** to
+match the API. Responses are never wrapped in `data`.
+
+`baseUrl` is the API **origin without the version**: `https://api.proofage.xyz` (the default).
+The client appends `/{version}` (default `v1`) itself, so requests go to
+`https://api.proofage.xyz/v1/...`. A trailing `/v1` on `baseUrl` (as in the OpenAPI `servers`
+entry) is stripped; a value that is not an absolute http(s) URL throws at construction.
+
+## Errors
+
+Every non-2xx response throws. `AuthenticationError` (401) and `ValidationError` (422, with
+`getErrors()` for field errors) extend `ProofAgeError`, which carries `statusCode`, `message`,
+`code` (the API's machine-readable code, when sent), `errorData` and the raw `responseBody`.
+The API uses four error body shapes; the client reads all of them:
+
+- `{ error: { code, message } }` — most errors (401 auth, 429 `RATE_LIMIT`, submit 422, media download 404). `errorData` is the inner object.
+- `{ code, message, ...extra }` — flat: `402 PAYMENT_METHOD_REQUIRED` (extra: `free_verifications_remaining`, `trial_ends_at`, `trial_active`) and media-quality rejections on upload (`422`, e.g. `FACE_NOT_FOUND`; `500 VALIDATION_SERVICE_UNAVAILABLE`). `errorData` is the whole body.
+- `{ message, errors }` — request validation (`422`). `code` is undefined; `getErrors()` has the fields.
+- `{ message }` — `403` (verification not in your workspace) and `404` (`Resource not found`).
+
+A 2xx response with an empty body resolves to `null`; a non-empty 2xx body that is not JSON
+throws `ProofAgeError` (almost always a `baseUrl` pointing at a website rather than the API).
+
+Retries: GETs retry on 408, 429, 5xx, timeouts and network errors. POSTs retry **only** on 429
+and on network errors raised before the request was sent (DNS failure, connection refused) —
+never on 5xx or timeouts, where the server may already have created the verification or
+stored the upload. A 429 waits for `Retry-After` when present, else `retryDelay × attempt`.
 
 ## Auth / HMAC
 
 - `X-API-Key`: workspace API key (plaintext; the server SHA256-hashes it).
 - `X-HMAC-Signature`: hex HMAC-SHA256 with the workspace secret key over a canonical string:
   - JSON / no-file requests: `METHOD + /{version}/{path} + rawJsonBody` (direct concatenation, no delimiter).
-  - Multipart (file) requests: `METHOD/{version}/{path}\n{sorted fields as RFC3986 query}\n{comma-joined sorted sha256(file) hashes}`.
+  - Multipart (file) requests: `METHOD/{version}/{path}\n{fields}\n{comma-joined sorted sha256(file) hashes}`,
+    where `{fields}` is PHP `http_build_query(ksort($fields), '', '&', PHP_QUERY_RFC3986)` — keys
+    sorted, values `rawurlencode`d (so `! ' ( ) *` are percent-encoded too). The server signs the
+    text fields exactly as it receives them, so the client signs exactly what it sends: `null`/
+    `undefined` fields are dropped, numbers are `String(n)`, booleans `"1"`/`"0"`, objects and
+    arrays JSON strings. Golden vectors: `tests/fixtures/hmac-vectors.json`.
 
 ## Endpoints
 
@@ -27,33 +57,37 @@ Request: none.
 Response: `{ id: number, version: string, text_sha256: string, url: string }`
 
 ### POST /verifications — `client.verifications().create(body)` → `CreatedVerification`
-Request: `{ fingerprint?: string(64), callback_url?: url(<=2048), external_id?: string(<=255), external_metadata?: object, metadata?: object }`
-Response: `{ id, external_id, external_metadata, redirect_url, status, reason, consent_accepted_at, created_at, updated_at, url }`
-Errors: `402` `{ code: "PAYMENT_METHOD_REQUIRED", message, free_verifications_remaining, trial_ends_at, trial_active }`.
+Request: `{ fingerprint?: string(64), callback_url?: url(<=2048), external_id?: string(<=255), external_metadata?: object, metadata?: object, page_url?: string(<=8192) }` (`page_url`: the page the verification was started on; only scheme, host and path are kept).
+Response (`201`): `{ id: string, external_id: string|null, external_metadata: object|null, redirect_url: string|null, status: string, reason: string|null, duplicate_check: DuplicateCheck, erasure: Erasure|null, consent_accepted_at: string|null, created_at: string, updated_at: string, url: string }` — `url` is the hosted session the person opens.
+Errors: `402` flat `{ code: "PAYMENT_METHOD_REQUIRED", message, free_verifications_remaining, trial_ends_at, trial_active }`; `422` `{ message, errors }`.
+
+- `DuplicateCheck`: `{ checked: boolean, duplicate_count: number, duplicates: [ { verification_id: string, external_id: string|null, similarity_score: number, verified_at: string|null } ] }` — always present.
+- `Erasure`: `{ erased_at: string, scope: "personal_data", reason: string|null, requested_via: "customer"|"proofage"|"retention"|null }` — `null` until the verification's personal data is erased. `reason` is an erasure reason code (`data_subject_request`, `customer_request`, `retention_policy`, `test_data`, `other`) or null if unrecorded.
 
 ### GET /verifications/{verification} — `client.verifications(id).get()` / `client.verifications().find(id)` → `Verification`
 Request: none.
-Response: same as create **without** `url`.
+Response: same as create **without** `url` (`duplicate_check` and `erasure` included).
 
 ### POST /verifications/{verification}/consent — `client.verifications(id).acceptConsent(body)` → `AcceptConsentResult`
-Request: `{ consent_version_id: number, text_sha256: string(64 hex) }`
+Request: `{ consent_version_id: number, text_sha256: string(64 hex), device?: { platform?, screen?, language?, timezone?: string|null, hardware_concurrency?, device_memory?: number|null }, in_app_browser?: string|null, camera_permission?: "granted"|"denied"|"prompt"|"unsupported"|null, camera_policy_allowed?: boolean|null, in_iframe?: boolean|null, referrer?: string|null }`. `consent_version_id` / `text_sha256` are `id` / `text_sha256` from `getConsent()`; the rest is optional browser context.
 Response: `{ consent_version_id: number, consent_accepted_at: string }`
 
-### POST /verifications/{verification}/media — `client.verifications(id).uploadMedia({ type, file, filename })` (multipart) → `MessageResult`
-Request: `{ file: Buffer|Uint8Array, type: "selfie"|"liveness_selfie"|"document", side?: "front"|"back" (req. if type=document), document?: "id"|"driver_license"|"passport"|"residence_permit" (req. if type=document), fingerprint?: string(64), head_turn_step?: number(0..10), capture_resolution?: json-string, device_info?: json-string }`
-Response: `{ message: string }`. Requires consent accepted first.
+### POST /verifications/{verification}/media — `client.verifications(id).uploadMedia(payload)` (multipart) → `null`
+Request (`UploadMediaPayload`): `{ file: Buffer|Uint8Array (image, <=10 MB; documents >=200px per edge), filename?: string, type: "selfie"|"liveness_selfie"|"document", side: "front"|"back" (required when type=document), document: "id"|"driver_license"|"passport"|"residence_permit" (required when type=document), fingerprint?: string(64), head_turn_step?: integer(0..10), capture_resolution?: JSON string or object, device_info?: JSON string or object, liveness_telemetry?: JSON string or array }`. Objects/arrays are sent as JSON strings; `null`/`undefined` fields are not sent.
+Response: `200` with an **empty body**; the method resolves to `null`. Requires consent accepted first.
+Errors: `422` flat `{ code, message }` when the image is rejected (e.g. `FACE_NOT_FOUND`), `422` `{ message, errors }` for invalid fields, `500` flat `{ code: "VALIDATION_SERVICE_UNAVAILABLE", message }`.
 
-### POST /verifications/{verification}/submit — `client.verifications(id).submit()` → `MessageResult`
+### POST /verifications/{verification}/submit — `client.verifications(id).submit()` → `null`
 Request: none.
-Response: `{ message: string }`. Error: `422 { error: { code, message } }`.
+Response: `200` with an **empty body**; the method resolves to `null`. Error: `422 { error: { code, message } }` (e.g. `MISSING_REQUIRED_MEDIA`).
 
 ### GET /verifications/{verification}/document — `client.verifications(id).document()` → `VerificationDocument`
 Request: none.
 Response: `{ document: { fields: { first_name: string|null, last_name: string|null, date_of_birth: string|null (YYYY-MM-DD), document_number: string|null } }, media: [ { id: string, type: "selfie"|"document_front"|"document_back", url: string|null } ], meta: { attempt_id: string|null } }`. `url` is the download endpoint for that media, null once it has been purged or is past retention.
 
-### GET /verifications/{verification}/media/{media} — `proofage.verifications(id).downloadMedia(mediaId)`
+### GET /verifications/{verification}/media/{media} — `client.verifications(id).downloadMedia(mediaId)` / `downloadMediaTo(mediaId, path)`
 Request: none. `{media}` is `media[].id` from document().
-Response: the image bytes, `Content-Type` from the file (e.g. `image/jpeg`). `downloadMedia()` returns a web `ReadableStream<Uint8Array>`; `downloadMediaTo(mediaId, path)` streams to disk and returns the path. Check `media[].url` is not null before downloading — null means purged or past retention. Error: `404 { error: { code: "MEDIA_NOT_FOUND", message } }`. Downloads never retry an HTTP status, 429 included: run them from a queue and let its backoff own the wait.
+Response: the image bytes, `Content-Type` from the file (e.g. `image/jpeg`). `downloadMedia()` returns a web `ReadableStream<Uint8Array>`; `downloadMediaTo(mediaId, path)` streams to disk and returns the path. Check `media[].url` is not null before downloading — null means purged or past retention. The request sends `Accept: application/json, */*;q=0.8` so errors come back as JSON. Error: `404 { error: { code: "MEDIA_NOT_FOUND", message } }`. Downloads never retry an HTTP status, 429 included: run them from a queue and let its backoff own the wait.
 
 ### GET /verifications/{verification}/estimation — `client.verifications(id).estimation()` → `AgeEstimation`
 Request: none.
@@ -65,14 +99,16 @@ Response: `204 No Content` (method resolves to `null`).
 
 ## Enums
 
-- `status`: one of `created`, `started`, `submitted`, `resubmission_requested`, `approved`, `declined`, `abandoned`, `expired`, `review`, or `documents_required` (the last is surfaced from the latest attempt's state, not a verification status). Treat `status` as an open string.
+- `status` (`VerificationStatus`): one of `created`, `started`, `submitted`, `resubmission_requested`, `approved`, `declined`, `abandoned`, `expired`, `review`, or `documents_required` (the last is surfaced from the latest attempt's state, not a verification status). The type is an open union: handle unknown values.
 - `reason_code` (request field on `blockFace`, the `BlockFaceReasonCode` union / `BLOCK_FACE_REASON_CODES` array): `presentation_attack` (spoof: screen, print or mask), `fraudulent_document` (forged, edited, or not a real document), `scam_or_abuse` (identity may be genuine — blocked for behaviour on your platform), `underage`, `other` (explain in `reason`). Optional over the API, mandatory in the ProofAge consoles: send it whenever a person made the decision, or the block cannot be told apart from an automated one in reporting.
 - `reason` (on `declined` / `resubmission_requested`): dotted codes from the server's reason catalog — illustrative examples: `aml.blocklist.face_match`, `document.face.mismatch`, `verification.age_threshold.failed`. Treat `reason` as an open string.
 
 ## Outbound webhook (ProofAge → your `callback_url` / workspace webhook URL)
 
 Headers: `X-Auth-Client` (api key), `X-Timestamp` (unix seconds), `X-HMAC-Signature`
-(= hex HMAC-SHA256 of `{timestamp}.{rawJsonBody}` with the active secret key). Verify with
+(= hex HMAC-SHA256 of `{timestamp}.{rawJsonBody}` with the active secret key),
+`X-ProofAge-Webhook-Delivery-Id` (the delivery id: the same on every automatic retry of one
+delivery, a new one on a manual resend — de-duplicate on it). Verify with
 the package's `webhookHandler` / `verifyWebhookSignature` / `handleWebhook` helpers. The body
 is typed as `WebhookPayload`:
 
@@ -80,12 +116,19 @@ is typed as `WebhookPayload`:
 {
   "verification_id": string,
   "status": string,
-  "external_id": string|null,
-  "external_metadata": object|null,
-  "reason": string|null,                       // only on resubmission_requested / declined
+  "external_id": string|null,                  // always present
+  "external_metadata": object|null,            // always present
+  "reason": string|null,                       // always present; a code only on resubmission_requested / declined
   "timestamp": string (ISO8601),
-  "duplicate_detected"?: true,
-  "duplicate_of"?: { "verification_id": string, "external_id": string|null }
+  "duplicate_detected"?: true,                 // the three duplicate_* keys appear together, only when a duplicate face was found
+  "duplicate_count"?: number,
+  "duplicate_of"?: { "verification_id": string, "external_id": string|null },
+  "fingerprint_signals"?: object,              // ip_address, ip_country_code, ip_timezone, device_timezone, ... when collected
+  "manual_moderation"?: {                      // after a console approve/decline
+    "action": "approve"|"decline", "reason": string, "source": "tenant_admin"|"landlord_admin",
+    "performed_by": { "id": number, "name": string|null, "email": string|null, "role": string|null },
+    "source_status"?: string, "source_reason"?: string|null   // approve only
+  }
 }
 ```
 

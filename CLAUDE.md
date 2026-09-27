@@ -21,3 +21,10 @@ The API contract lives in the app repo, not here: see `developer-docs/README.md`
 `tests/api-contract.test.ts` pass by updating `OPERATIONS`, `src/types.ts` and `AGENTS.md`
 together. `AGENTS.md` ships to consumers and is the authoritative response contract; this file
 does not ship (see `files` in package.json), so maintainer notes belong here.
+
+## HMAC vectors
+
+`tests/fixtures/hmac-vectors.json` is a verbatim copy of `resources/hmac-vectors.json` from
+`proofage/php-sdk` — the file the app also runs through its real `VerifyHmacSignature`
+middleware. Refresh it by copying when that file changes; never edit it by hand. A signing
+change here that breaks a vector breaks real requests.
