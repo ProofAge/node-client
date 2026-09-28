@@ -15,6 +15,19 @@ export interface ProofAgeConfig {
   timeout?: number;
   retryAttempts?: number;
   retryDelay?: number;
+  /**
+   * For packages that wrap this client (e.g. a Shopify app): `<name>/<version>` tokens,
+   * outermost wrapper first, sent ahead of this SDK's own token in `X-ProofAge-Sdk` —
+   * `['shopify-app/1.4.0']` sends `X-ProofAge-Sdk: shopify-app/1.4.0 node/<version>`.
+   * The SDK's own `node/<version>` token is always sent last and cannot be removed; a
+   * token named `node` here is ignored. An invalid token throws at construction.
+   */
+  sdkTokens?: readonly string[];
+  /**
+   * Overrides the default `User-Agent: ProofAge-Node/<version> (Node <runtime>)`.
+   * `X-ProofAge-Sdk` is sent either way.
+   */
+  userAgent?: string;
 }
 
 /**

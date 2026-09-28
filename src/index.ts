@@ -20,6 +20,7 @@ export {
 export { generateWebhookSignature, handleWebhook, verifyWebhookSignature, webhookHandler } from './webhook.js';
 export type { HandleWebhookOptions, HandleWebhookResult, VerifyWebhookSignatureInput } from './webhook.js';
 export { BLOCK_FACE_REASON_CODES } from './types.js';
+export { SDK_VERSION } from './version.js';
 export { VerificationResource } from './resources/verifications.js';
 export { WorkspaceResource } from './resources/workspace.js';
 export type {

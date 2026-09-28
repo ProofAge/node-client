@@ -69,12 +69,25 @@ All options fall back to environment variables, then to defaults.
 | `timeout` | `PROOFAGE_TIMEOUT` | `30000` | Request timeout (ms) |
 | `retryAttempts` | `PROOFAGE_RETRY_ATTEMPTS` | `3` | Total attempts for transient failures (see below) |
 | `retryDelay` | `PROOFAGE_RETRY_DELAY` | `1000` | Base delay between retries (ms), multiplied by the attempt number |
+| `sdkTokens` | — | `[]` | For wrapper packages: `<name>/<version>` tokens prepended to `X-ProofAge-Sdk` (see below) |
+| `userAgent` | — | `ProofAge-Node/<version> (Node <runtime>)` | Overrides the `User-Agent` header |
 
 **Retries.** GET requests retry on 408, 429, 5xx, timeouts and network errors. POST requests
 (create, consent, upload, submit, block) retry **only** on 429 and on network errors raised
 before the request was sent (DNS failure, connection refused) — never on a 5xx or a timeout,
 where the server may already have acted, so a retry could create a second verification. A 429
 waits for the API's `Retry-After`. Media downloads never retry an HTTP status.
+
+**SDK identification.** Every request carries `X-ProofAge-Sdk: node/<package version>` and
+`User-Agent: ProofAge-Node/<package version> (Node <runtime version>)`, so ProofAge support can
+tell which client and version sent it. Neither header is part of the HMAC signature. A package
+that wraps this client names itself with `sdkTokens`, outermost first; the client's own token
+always stays last:
+
+```typescript
+const client = new ProofAgeClient({ sdkTokens: ['shopify-app/1.4.0'] });
+// X-ProofAge-Sdk: shopify-app/1.4.0 node/0.6.0
+```
 
 ## API Methods
 

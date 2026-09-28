@@ -29,7 +29,8 @@
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "sync-spec": "node scripts/sync-spec.mjs",
-    "check-release": "node scripts/check-release.mjs"
+    "check-release": "node scripts/check-release.mjs",
+    "version": "node scripts/sync-version.mjs && git add src/version.ts"
   },
   "engines": {
     "node": ">=22"

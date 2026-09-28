@@ -6,6 +6,7 @@ import {
   toMultipartFields,
 } from './hmac.js';
 import { VerificationResource } from './resources/verifications.js';
+import { buildSdkHeader, defaultUserAgent, SDK_HEADER } from './sdk-identification.js';
 import { WorkspaceResource } from './resources/workspace.js';
 import type { ApiErrorData, ProofAgeConfig } from './types.js';
 
@@ -155,6 +156,12 @@ export class ProofAgeClient {
   >;
 
   /**
+   * `X-ProofAge-Sdk` and `User-Agent`, fixed at construction and sent on every request.
+   * Neither is signed: the HMAC covers only method, path and body.
+   */
+  private readonly identificationHeaders: Readonly<Record<string, string>>;
+
+  /**
    * Create a client configured entirely from environment variables.
    * Uses the same env names as the Laravel package (config/proofage.php):
    *   PROOFAGE_API_KEY, PROOFAGE_SECRET_KEY, PROOFAGE_BASE_URL,
@@ -186,6 +193,11 @@ export class ProofAgeClient {
       retryAttempts: config.retryAttempts ?? envInt('PROOFAGE_RETRY_ATTEMPTS') ?? 3,
       retryDelay: config.retryDelay ?? envInt('PROOFAGE_RETRY_DELAY') ?? 1000,
     };
+
+    this.identificationHeaders = {
+      [SDK_HEADER]: buildSdkHeader(config.sdkTokens),
+      'User-Agent': config.userAgent?.trim() ? config.userAgent : defaultUserAgent(),
+    };
   }
 
   workspace(): WorkspaceResource {
@@ -210,6 +222,7 @@ export class ProofAgeClient {
     const hasFiles = Object.keys(files).length > 0;
 
     const headers: Record<string, string> = {
+      ...this.identificationHeaders,
       Accept: 'application/json',
       'X-API-Key': this.config.apiKey,
     };
@@ -292,6 +305,7 @@ export class ProofAgeClient {
       const res = await fetch(url, {
         method,
         headers: {
+          ...this.identificationHeaders,
           'X-API-Key': this.config.apiKey,
           'X-HMAC-Signature': signature,
           Accept: DOWNLOAD_ACCEPT,

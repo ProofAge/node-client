@@ -9,6 +9,12 @@ where it does not, the response interfaces below are authoritative).
 All requests send `X-API-Key` and `X-HMAC-Signature`. Request bodies use **snake_case** to
 match the API. Responses are never wrapped in `data`.
 
+Every request also identifies the SDK: `X-ProofAge-Sdk: node/<package version>` (wrapper
+packages prepend their own `<name>/<version>` tokens via the `sdkTokens` option, outermost
+first, space-separated; the `node/<version>` token is always last) and `User-Agent:
+ProofAge-Node/<package version> (Node <runtime version>)` unless `userAgent` is set. Neither
+header is signed.
+
 `baseUrl` is the API **origin without the version**: `https://api.proofage.xyz` (the default).
 The client appends `/{version}` (default `v1`) itself, so requests go to
 `https://api.proofage.xyz/v1/...`. A trailing `/v1` on `baseUrl` (as in the OpenAPI `servers`

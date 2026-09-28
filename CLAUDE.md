@@ -14,6 +14,11 @@ Release steps: `npm version <patch|minor> --no-git-tag-version` → commit `chor
 → push `main` → `git tag vX.Y.Z` → push the tag. The tag triggers Trusted Publishing; never run
 `npm publish` by hand.
 
+`npm version` also regenerates `src/version.ts` (the `version` lifecycle script runs
+`scripts/sync-version.mjs`), which is what the client sends in `X-ProofAge-Sdk` and
+`User-Agent`. Never edit that file by hand; `tests/sdk-identification.test.ts` fails if it
+drifts from `package.json`.
+
 ## Changing the API surface
 
 The API contract lives in the app repo, not here: see `developer-docs/README.md` §
