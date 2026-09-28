@@ -150,6 +150,14 @@ describe('X-ProofAge-Sdk and User-Agent', () => {
     expect(() => new ProofAgeClient({ ...baseConfig, sdkTokens: [token] })).toThrow(ProofAgeError);
   });
 
+  it.each([
+    ['a newline', 'MyShop/3.1\r\nX-Evil: 1'],
+    ['non-ASCII', 'Магазин/1.0'],
+    ['a NUL byte', 'MyShop\u0000/1.0'],
+  ])('rejects a User-Agent with %s when the client is created, not on every request', (_label, userAgent) => {
+    expect(() => new ProofAgeClient({ ...baseConfig, userAgent })).toThrow(ProofAgeError);
+  });
+
   it('keeps a caller-supplied User-Agent, and still identifies the SDK', async () => {
     const spy = stubFetch();
 

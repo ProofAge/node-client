@@ -6,7 +6,7 @@ import {
   toMultipartFields,
 } from './hmac.js';
 import { VerificationResource } from './resources/verifications.js';
-import { buildSdkHeader, defaultUserAgent, SDK_HEADER } from './sdk-identification.js';
+import { buildSdkHeader, resolveUserAgent, SDK_HEADER } from './sdk-identification.js';
 import { WorkspaceResource } from './resources/workspace.js';
 import type { ApiErrorData, ProofAgeConfig } from './types.js';
 
@@ -196,7 +196,7 @@ export class ProofAgeClient {
 
     this.identificationHeaders = {
       [SDK_HEADER]: buildSdkHeader(config.sdkTokens),
-      'User-Agent': config.userAgent?.trim() ? config.userAgent : defaultUserAgent(),
+      'User-Agent': resolveUserAgent(config.userAgent),
     };
   }
 

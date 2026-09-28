@@ -36,6 +36,24 @@ export function buildSdkHeader(wrapperTokens: readonly string[] = []): string {
 }
 
 /**
+ * The User-Agent to send: the caller's, checked here so a value fetch would refuse (a line
+ * break, a non-ASCII shop name) fails once when the client is created instead of on every
+ * request after its retries; or the default when none was given.
+ */
+export function resolveUserAgent(userAgent: string | undefined): string {
+  if (userAgent === undefined || userAgent.trim() === '') {
+    return defaultUserAgent();
+  }
+  if (!/^[\x20-\x7E]+$/.test(userAgent)) {
+    throw new ProofAgeError(
+      `Invalid userAgent ${JSON.stringify(userAgent)}: use printable ASCII only, with no line breaks`,
+      0,
+    );
+  }
+  return userAgent;
+}
+
+/**
  * `ProofAge-Node/<version> (Node <runtime version>)`, or just `ProofAge-Node/<version>` where
  * there is no Node `process` to read the runtime from.
  */
