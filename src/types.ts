@@ -158,7 +158,8 @@ export interface WorkspaceInfo {
 /** GET /v1/consent */
 export interface ConsentInfo {
   id: number;
-  version: string;
+  /** The consent version number; informational (accept with `id` and `text_sha256`). */
+  version: number;
   text_sha256: string;
   url: string;
 }

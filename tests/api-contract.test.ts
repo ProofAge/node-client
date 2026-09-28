@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { BLOCK_FACE_REASON_CODES } from '../src/types.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import type { ConsentInfo } from '../src/types.js';
 
 interface OperationContract {
   method: string;
@@ -261,5 +262,13 @@ describe('API contract drift', () => {
     expect(BLOCK_FACE_REASON_CODES).toEqual(
       (spec.components as { schemas: Record<string, { enum: string[] }> }).schemas.BlockedFaceReasonCode.enum,
     );
+  });
+
+  it('types the consent version as the integer the API sends', () => {
+    // Scramble documents field types, and the SDK's interfaces must follow them: the
+    // name-only checks above let `version: string` drift from the API's integer.
+    const schema = spec.paths['/consent']?.get?.responses?.['200']?.content?.['application/json']?.schema;
+    expect(schema?.properties?.version?.type).toBe('integer');
+    expectTypeOf<ConsentInfo['version']>().toEqualTypeOf<number>();
   });
 });

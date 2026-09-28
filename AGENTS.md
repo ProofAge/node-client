@@ -60,7 +60,7 @@ Response: `{ id: string, name: string, flow_type: string, mode: string, age_mode
 
 ### GET /consent — `client.workspace().getConsent()` → `ConsentInfo`
 Request: none.
-Response: `{ id: number, version: string, text_sha256: string, url: string }`
+Response: `{ id: number, version: number, text_sha256: string, url: string }` (`version` is informational: accept consent with `id` and `text_sha256`)
 
 ### POST /verifications — `client.verifications().create(body)` → `CreatedVerification`
 Request: `{ fingerprint?: string(64), callback_url?: url(<=2048), external_id?: string(<=255), external_metadata?: object, metadata?: object, page_url?: string(<=8192) }` (`page_url`: the page the verification was started on; only scheme, host and path are kept).
