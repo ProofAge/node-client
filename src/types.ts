@@ -34,16 +34,17 @@ export interface ProofAgeConfig {
  * POST /v1/verifications body (snake_case matches API).
  */
 export interface CreateVerificationPayload {
-  fingerprint?: string;
   callback_url?: string;
   external_id?: string;
   external_metadata?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
-  /** Page the verification was started on (<= 8192 chars); only scheme, host and path are kept. */
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
+  fingerprint?: string;
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   page_url?: string;
 }
 
-/** Browser details sent with consent; every field is optional. */
+/** @deprecated Browser details the ProofAge widget sends with consent; not part of the public API. */
 export interface ConsentDevice {
   platform?: string | null;
   screen?: string | null;
@@ -53,6 +54,7 @@ export interface ConsentDevice {
   device_memory?: number | null;
 }
 
+/** @deprecated Sent by the ProofAge widget; not part of the public API. */
 export type CameraPermissionState = 'granted' | 'denied' | 'prompt' | 'unsupported';
 
 /**
@@ -63,15 +65,21 @@ export interface AcceptConsentPayload {
   consent_version_id: number;
   /** 64 hex characters. */
   text_sha256: string;
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   device?: ConsentDevice | null;
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   in_app_browser?: string | null;
-  /** Unrecognised values are nulled by the API rather than rejected. */
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   camera_permission?: CameraPermissionState | null;
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   camera_policy_allowed?: boolean | null;
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   in_iframe?: boolean | null;
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   referrer?: string | null;
 }
 
+/** `liveness_selfie` is deprecated: the ProofAge widget sends it, integrations upload `selfie`. */
 export type MediaUploadType = 'selfie' | 'liveness_selfie' | 'document';
 
 export type DocumentSide = 'front' | 'back';
@@ -83,15 +91,15 @@ interface UploadMediaCommon {
   file: Buffer | Uint8Array;
   /** Filename sent with the multipart part. Defaults to `upload.bin`. */
   filename?: string;
-  /** SHA-256 hex (64 chars) device fingerprint. */
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   fingerprint?: string | null;
-  /** Head-turn liveness step, 0..10. */
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   head_turn_step?: number | null;
-  /** JSON string, or an object the client JSON-encodes: `{ requested: {width,height}, actual: {width,height} }`. */
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   capture_resolution?: string | Record<string, unknown> | null;
-  /** JSON string, or an object the client JSON-encodes (user_agent, platform, screen, language, timezone, ...). */
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   device_info?: string | Record<string, unknown> | null;
-  /** JSON string, or an array the client JSON-encodes; malformed telemetry is dropped by the API, never rejected. */
+  /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   liveness_telemetry?: string | unknown[] | null;
 }
 

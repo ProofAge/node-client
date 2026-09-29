@@ -63,7 +63,7 @@ Request: none.
 Response: `{ id: number, version: number, text_sha256: string, url: string }` (`version` is informational: accept consent with `id` and `text_sha256`)
 
 ### POST /verifications — `client.verifications().create(body)` → `CreatedVerification`
-Request: `{ fingerprint?: string(64), callback_url?: url(<=2048), external_id?: string(<=255), external_metadata?: object, metadata?: object, page_url?: string(<=8192) }` (`page_url`: the page the verification was started on; only scheme, host and path are kept).
+Request: `{ callback_url?: url(<=2048), external_id?: string(<=255), external_metadata?: object, metadata?: object }`. `external_id` and `callback_url` are kept only when the request is signed (the client signs every request).
 Response (`201`): `{ id: string, external_id: string|null, external_metadata: object|null, redirect_url: string|null, status: string, reason: string|null, duplicate_check: DuplicateCheck, erasure: Erasure|null, consent_accepted_at: string|null, created_at: string, updated_at: string, url: string }` — `url` is the hosted session the person opens.
 Errors: `402` flat `{ code: "PAYMENT_METHOD_REQUIRED", message, free_verifications_remaining, trial_ends_at, trial_active }`; `422` `{ message, errors }`.
 
@@ -75,11 +75,11 @@ Request: none.
 Response: same as create **without** `url` (`duplicate_check` and `erasure` included).
 
 ### POST /verifications/{verification}/consent — `client.verifications(id).acceptConsent(body)` → `AcceptConsentResult`
-Request: `{ consent_version_id: number, text_sha256: string(64 hex), device?: { platform?, screen?, language?, timezone?: string|null, hardware_concurrency?, device_memory?: number|null }, in_app_browser?: string|null, camera_permission?: "granted"|"denied"|"prompt"|"unsupported"|null, camera_policy_allowed?: boolean|null, in_iframe?: boolean|null, referrer?: string|null }`. `consent_version_id` / `text_sha256` are `id` / `text_sha256` from `getConsent()`; the rest is optional browser context.
+Request: `{ consent_version_id: number, text_sha256: string(64 hex) }`: the `id` and `text_sha256` from `getConsent()`.
 Response: `{ consent_version_id: number, consent_accepted_at: string }`
 
 ### POST /verifications/{verification}/media — `client.verifications(id).uploadMedia(payload)` (multipart) → `null`
-Request (`UploadMediaPayload`): `{ file: Buffer|Uint8Array (image, <=10 MB; documents >=200px per edge), filename?: string, type: "selfie"|"liveness_selfie"|"document", side: "front"|"back" (required when type=document), document: "id"|"driver_license"|"passport"|"residence_permit" (required when type=document), fingerprint?: string(64), head_turn_step?: integer(0..10), capture_resolution?: JSON string or object, device_info?: JSON string or object, liveness_telemetry?: JSON string or array }`. Objects/arrays are sent as JSON strings; `null`/`undefined` fields are not sent.
+Request (`UploadMediaPayload`): `{ file: Buffer|Uint8Array (image, <=10 MB; documents >=200px per edge), filename?: string, type: "selfie"|"document", side: "front"|"back" (required when type=document), document: "id"|"driver_license"|"passport"|"residence_permit" (required when type=document) }`. `null`/`undefined` fields are not sent.
 Response: `200` with an **empty body**; the method resolves to `null`. Requires consent accepted first.
 Errors: `422` flat `{ code, message }` when the image is rejected (e.g. `FACE_NOT_FOUND`), `422` `{ message, errors }` for invalid fields, `500` flat `{ code: "VALIDATION_SERVICE_UNAVAILABLE", message }`.
 

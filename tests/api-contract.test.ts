@@ -51,7 +51,7 @@ const OPERATIONS: Record<string, OperationContract> = {
   'verifications.create': {
     method: 'POST',
     path: '/verifications',
-    request: ['fingerprint', 'callback_url', 'external_id', 'external_metadata', 'metadata', 'page_url'],
+    request: ['callback_url', 'external_id', 'external_metadata', 'metadata'],
     responseStatus: '201',
     response: [
       'id',
@@ -89,13 +89,13 @@ const OPERATIONS: Record<string, OperationContract> = {
   'verifications.acceptConsent': {
     method: 'POST',
     path: '/verifications/{verification}/consent',
-    request: ['consent_version_id', 'text_sha256', 'device', 'in_app_browser', 'in_iframe', 'referrer', 'camera_permission', 'camera_policy_allowed'],
+    request: ['consent_version_id', 'text_sha256'],
     response: ['consent_version_id', 'consent_accepted_at'],
   },
   'verifications.uploadMedia': {
     method: 'POST',
     path: '/verifications/{verification}/media',
-    request: ['file', 'type', 'side', 'document', 'fingerprint', 'head_turn_step', 'capture_resolution', 'device_info', 'liveness_telemetry'],
+    request: ['file', 'type', 'side', 'document'],
     response: [],
   },
   'verifications.submit': {
