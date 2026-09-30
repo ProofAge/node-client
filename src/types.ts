@@ -239,14 +239,39 @@ export interface AcceptConsentResult {
   consent_accepted_at: string;
 }
 
-/** GET /v1/verifications/{id}/document */
+/**
+ * The document type a result reports. `other` is declared and not yet produced. Open, so a
+ * value added upstream does not break compilation: handle unknown values.
+ */
+export type DocumentResultType = DocumentType | 'other' | (string & {});
+
+/**
+ * The sex a document states. `X` (unspecified) is declared and not yet produced. Open, so a
+ * value added upstream does not break compilation.
+ */
+export type DocumentGender = 'F' | 'M' | 'X' | (string & {});
+
+/**
+ * GET /v1/verifications/{id}/document. Identity (KYC) workspaces receive all ten `fields`;
+ * age workspaces receive only the four base ones, so the six KYC-only keys are optional
+ * (absent there, not null). Dates are `YYYY-MM-DD`; countries are ISO 3166-1 alpha-2 (`XK`
+ * for Kosovo). Keep every new key optional: an older API body must still parse.
+ */
 export interface VerificationDocument {
   document: {
+    type?: DocumentResultType | null;
+    issuing_country?: string | null;
     fields: {
       first_name: string | null;
+      middle_name?: string | null;
       last_name: string | null;
       date_of_birth: string | null;
+      gender?: DocumentGender | null;
+      nationality?: string | null;
+      place_of_birth?: string | null;
       document_number: string | null;
+      issue_date?: string | null;
+      expiry_date?: string | null;
     };
   };
   media: Array<{

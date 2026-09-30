@@ -170,6 +170,57 @@ describe('ProofAgeClient', () => {
     expect(headers['X-HMAC-Signature']).toBeDefined();
   });
 
+  it('parses a KYC document body with all ten fields and an unknown type', async () => {
+    const body = {
+      document: {
+        type: 'health_card',
+        issuing_country: 'DE',
+        fields: {
+          first_name: 'JANE',
+          middle_name: null,
+          last_name: 'DOE',
+          date_of_birth: '1990-04-12',
+          gender: 'F',
+          nationality: 'DE',
+          place_of_birth: 'BERLIN',
+          document_number: 'X1234567',
+          issue_date: '2020-04-14',
+          expiry_date: '2030-04-30',
+        },
+      },
+      media: [],
+      meta: { attempt_id: 'attempt_123' },
+    };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))));
+
+    const result = await new ProofAgeClient(baseConfig).verifications('ver_123').document();
+
+    expect(result?.document.type).toBe('health_card');
+    expect(result?.document.issuing_country).toBe('DE');
+    expect(Object.keys(result?.document.fields ?? {})).toHaveLength(10);
+    expect(result?.document.fields.expiry_date).toBe('2030-04-30');
+  });
+
+  it('parses an age-workspace document body where the KYC-only keys are absent', async () => {
+    const body = {
+      document: {
+        type: 'id',
+        issuing_country: 'FR',
+        fields: { first_name: 'JEAN', last_name: 'MARTIN', date_of_birth: null, document_number: 'X4RTBPFW4' },
+      },
+      media: [],
+      meta: { attempt_id: null },
+    };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))));
+
+    const result = await new ProofAgeClient(baseConfig).verifications('ver_123').document();
+
+    expect(result?.document.type).toBe('id');
+    expect(result?.document.fields.date_of_birth).toBeNull();
+    expect(result?.document.fields).not.toHaveProperty('gender');
+    expect(result?.document.fields).not.toHaveProperty('expiry_date');
+  });
+
   it('throws when getting verification document without id', async () => {
     const client = new ProofAgeClient(baseConfig);
 

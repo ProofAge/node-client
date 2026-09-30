@@ -37,6 +37,8 @@ export type {
   CreatedVerification,
   CreateVerificationPayload,
   DocumentSide,
+  DocumentGender,
+  DocumentResultType,
   DocumentType,
   DuplicateCheck,
   Erasure,
