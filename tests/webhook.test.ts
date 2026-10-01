@@ -291,6 +291,62 @@ describe('handleWebhook', () => {
     expect(result.error).toBeNull();
   });
 
+  it('returns a typed document on a webhook that carries one', async () => {
+    const req = buildRequest({
+      verification_id: 'v1',
+      status: 'approved',
+      timestamp: '2025-01-01T00:00:00Z',
+      document: {
+        type: 'passport',
+        issuing_country: 'DE',
+        fields: {
+          first_name: 'ÉLODIE',
+          middle_name: null,
+          last_name: 'DOE',
+          date_of_birth: '1990-04-12',
+          gender: 'F',
+          nationality: null,
+          place_of_birth: 'BERLIN',
+          address: '1 Main St\n10115 BERLIN',
+          document_number: 'X1234567',
+          issue_date: null,
+          expiry_date: '2030-04-30',
+        },
+      },
+    });
+    const result = await handleWebhook(req, { secretKey, apiKey });
+
+    expect(result.verified).toBe(true);
+    expect(result.payload?.document?.type).toBe('passport');
+    expect(result.payload?.document?.fields.first_name).toBe('ÉLODIE');
+    expect(result.payload?.document?.fields.address).toBe('1 Main St\n10115 BERLIN');
+  });
+
+  it('parses an age webhook with the KYC-only keys absent and one without a document', async () => {
+    const age = await handleWebhook(
+      buildRequest({
+        verification_id: 'v1',
+        status: 'approved',
+        timestamp: '2025-01-01T00:00:00Z',
+        document: {
+          type: 'id',
+          issuing_country: 'FR',
+          fields: { first_name: 'JEAN', last_name: 'MARTIN', date_of_birth: null, document_number: 'X1' },
+        },
+      }),
+      { secretKey, apiKey },
+    );
+    const old = await handleWebhook(
+      buildRequest({ verification_id: 'v1', status: 'approved', timestamp: '2025-01-01T00:00:00Z' }),
+      { secretKey, apiKey },
+    );
+
+    expect(age.payload?.document?.fields).not.toHaveProperty('gender');
+    expect(age.payload?.document?.fields.date_of_birth).toBeNull();
+    expect(old.verified).toBe(true);
+    expect(old.payload?.document).toBeUndefined();
+  });
+
   it('returns error for invalid signature', async () => {
     const req = new Request('http://localhost/webhook', {
       method: 'POST',

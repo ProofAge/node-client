@@ -128,6 +128,7 @@ is typed as `WebhookPayload`:
   "external_metadata": object|null,            // always present
   "reason": string|null,                       // always present; a code only on resubmission_requested / declined
   "timestamp": string (ISO8601),
+  "document"?: { "type"?: ..., "issuing_country"?: string|null, "fields": {...} },  // same object as document() without media; see below
   "duplicate_detected"?: true,                 // the three duplicate_* keys appear together, only when a duplicate face was found
   "duplicate_count"?: number,
   "duplicate_of"?: { "verification_id": string, "external_id": string|null },
@@ -139,6 +140,17 @@ is typed as `WebhookPayload`:
   }
 }
 ```
+
+`document` is on every decision webhook, whatever the status: the same object `document()` returns
+(`type`, `issuing_country`, `fields`), without `media` and `meta`, typed as
+`VerificationDocument['document']` and optional because a body sent before it existed, or the body of
+a retry after erasure, may lack it. KYC workspaces receive eleven `fields`; age workspaces receive
+`first_name`, `last_name`, `date_of_birth` and `document_number` only, the other seven keys being
+absent. `null` means not read, not printed, or no document read at all (an age estimate without an ID,
+a test workspace, a wallet check); `document` itself is never null on a current body. A resend and a
+manual retry carry the document as it is now, an automatic retry the body as first sent; after
+erasure only `type` and `issuing_country` remain. The body carries names: verify the signature over
+the raw bytes before parsing, and do not log it.
 
 ## Keeping this in sync
 

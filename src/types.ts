@@ -331,6 +331,13 @@ export interface WebhookPayload {
   /** Always present; a reason code only on `resubmission_requested` / `declined`, otherwise null. */
   reason: string | null;
   timestamp: string;
+  /**
+   * The same object `GET /v1/verifications/{id}/document` returns (without `media`), on every decision
+   * webhook. Optional on the type: a body sent before this was added, and the body of a retry after
+   * the person's data was erased, parse too. After erasure a resend keeps `type` and `issuing_country`
+   * and nulls every field.
+   */
+  document?: VerificationDocument['document'];
   /** Only when a duplicate face was found. */
   duplicate_detected?: true;
   /** Only when a duplicate face was found. */
