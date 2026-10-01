@@ -183,6 +183,7 @@ describe('ProofAgeClient', () => {
           gender: 'F',
           nationality: 'DE',
           place_of_birth: 'BERLIN',
+          address: 'Rua das Flores 12\n1000-001 LISBOA',
           document_number: 'X1234567',
           issue_date: '2020-04-14',
           expiry_date: '2030-04-30',
@@ -197,7 +198,8 @@ describe('ProofAgeClient', () => {
 
     expect(result?.document.type).toBe('health_card');
     expect(result?.document.issuing_country).toBe('DE');
-    expect(Object.keys(result?.document.fields ?? {})).toHaveLength(10);
+    expect(Object.keys(result?.document.fields ?? {})).toHaveLength(11);
+    expect(result?.document.fields.address).toBe('Rua das Flores 12\n1000-001 LISBOA');
     expect(result?.document.fields.expiry_date).toBe('2030-04-30');
   });
 
@@ -218,6 +220,7 @@ describe('ProofAgeClient', () => {
     expect(result?.document.type).toBe('id');
     expect(result?.document.fields.date_of_birth).toBeNull();
     expect(result?.document.fields).not.toHaveProperty('gender');
+    expect(result?.document.fields).not.toHaveProperty('address');
     expect(result?.document.fields).not.toHaveProperty('expiry_date');
   });
 
