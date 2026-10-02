@@ -240,7 +240,7 @@ export interface AcceptConsentResult {
 }
 
 /**
- * The document type a result reports. `other` is declared and not yet produced. Open, so a
+ * The document type a result reports. `other` is a readable document that is not an identity card, passport, driving licence or residence permit, such as a health insurance card. Open, so a
  * value added upstream does not break compilation: handle unknown values.
  */
 export type DocumentResultType = DocumentType | 'other' | (string & {});
