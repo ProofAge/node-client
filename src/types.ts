@@ -261,6 +261,8 @@ export interface VerificationDocument {
   document: {
     type?: DocumentResultType | null;
     issuing_country?: string | null;
+    /** State or province of issuance as a bare code (`FL` with `US`), or null; filled for US driving licences and ID cards. */
+    issuing_subdivision?: string | null;
     fields: {
       first_name: string | null;
       middle_name?: string | null;

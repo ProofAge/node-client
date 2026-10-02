@@ -175,6 +175,7 @@ describe('ProofAgeClient', () => {
       document: {
         type: 'health_card',
         issuing_country: 'DE',
+        issuing_subdivision: null,
         fields: {
           first_name: 'JANE',
           middle_name: null,
@@ -201,6 +202,23 @@ describe('ProofAgeClient', () => {
     expect(Object.keys(result?.document.fields ?? {})).toHaveLength(11);
     expect(result?.document.fields.address).toBe('Rua das Flores 12\n1000-001 LISBOA');
     expect(result?.document.fields.expiry_date).toBe('2030-04-30');
+  });
+
+  it('parses the state of issuance of a US driving licence and a body without it', async () => {
+    const body = {
+      document: { type: 'driver_license', issuing_country: 'US', issuing_subdivision: 'CA', fields: { first_name: 'JANE', last_name: 'DOE', date_of_birth: null, document_number: 'D1' } },
+      media: [],
+      meta: { attempt_id: null },
+    };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))));
+    const us = await new ProofAgeClient(baseConfig).verifications('ver_123').document();
+
+    delete (body.document as Record<string, unknown>).issuing_subdivision;
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))));
+    const older = await new ProofAgeClient(baseConfig).verifications('ver_123').document();
+
+    expect(us?.document.issuing_subdivision).toBe('CA');
+    expect(older?.document.issuing_subdivision).toBeUndefined();
   });
 
   it('parses an age-workspace document body where the KYC-only keys are absent', async () => {
