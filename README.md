@@ -72,8 +72,8 @@ All options fall back to environment variables, then to defaults.
 | `sdkTokens` | — | `[]` | For wrapper packages: `<name>/<version>` tokens prepended to `X-ProofAge-Sdk` (see below) |
 | `userAgent` | — | `ProofAge-Node/<version> (Node <runtime>)` | Overrides the `User-Agent` header |
 
-**Retries.** GET requests retry on 408, 429, 5xx, timeouts and network errors. POST requests
-(create, consent, upload, submit, block) retry **only** on 429 and on network errors raised
+**Retries.** GET requests retry on 408, 429, 5xx, timeouts and network errors. POST and DELETE
+requests (create, consent, upload, submit, block, test outcome, webhook subscriptions) retry **only** on 429 and on network errors raised
 before the request was sent (DNS failure, connection refused) — never on a 5xx or a timeout,
 where the server may already have acted, so a retry could create a second verification. A 429
 waits for the API's `Retry-After`. Media downloads never retry an HTTP status.
@@ -94,6 +94,7 @@ const client = new ProofAgeClient({ sdkTokens: ['shopify-app/1.4.0'] });
 - `client.workspace().get()` — `GET /v1/workspace`
 - `client.workspace().getConsent()` — `GET /v1/consent`
 - `client.verifications().create(body)` — `POST /v1/verifications`
+- `client.verifications().list(params)` — `GET /v1/verifications` (filters and cursor paging; resolves to `{ data, next_cursor }`)
 - `client.verifications(id).get()` / `client.verifications().find(id)` — `GET /v1/verifications/{id}`
 - `client.verifications(id).acceptConsent(body)` — `POST /v1/verifications/{id}/consent`
 - `client.verifications(id).uploadMedia(payload)` — `POST /v1/verifications/{id}/media` (multipart; resolves to `null`)
@@ -103,8 +104,66 @@ const client = new ProofAgeClient({ sdkTokens: ['shopify-app/1.4.0'] });
 - `client.verifications(id).downloadMediaTo(mediaId, path)` — same, streamed to a file; resolves to the path
 - `client.verifications(id).estimation()` — `GET /v1/verifications/{id}/estimation`
 - `client.verifications(id).blockFace({ reason_code, reason })` — `POST /v1/verifications/{id}/blocked-face`
+- `client.verifications(id).setTestOutcome({ status, reason })` — `POST /v1/verifications/{id}/test-outcome` (test workspaces only)
+- `client.webhookSubscriptions().create(body)` — `POST /v1/webhook-subscriptions`
+- `client.webhookSubscriptions().list()` — `GET /v1/webhook-subscriptions`
+- `client.webhookSubscriptions().delete(id)` — `DELETE /v1/webhook-subscriptions/{id}` (resolves to `null`)
 
 Request bodies use **snake_case** keys to match the ProofAge API. `callback_url` is optional — if omitted, the verification result is available via polling or webhook.
+
+### Listing verifications
+
+Newest first, filtered by `status` and `external_id`, a page of `limit` (1-100, default 20) at a time:
+
+```typescript
+let cursor: string | undefined;
+do {
+  const page = (await client.verifications().list({ status: ['approved', 'declined'], limit: 100, cursor }))!;
+  for (const verification of page.data) {
+    console.log(verification.id, verification.status);
+  }
+  cursor = page.next_cursor ?? undefined; // null on the last page
+} while (cursor);
+```
+
+Send the same filters with every `cursor`. The query string is signed exactly as the API
+normalises it (sorted keys, RFC 3986 encoding), so nothing needs to be encoded by hand.
+
+### Testing each outcome
+
+In a **test workspace**, finish a verification with the outcome you want to test, without going
+through the widget. The decision webhooks are sent as for a real decision:
+
+```typescript
+const { id } = (await client.verifications().create({ external_id: 'user-42' }))!;
+const verification = await client.verifications(id).setTestOutcome({ status: 'declined' });
+// status: 'approved' | 'declined' | 'review' | 'resubmission_requested'
+```
+
+A live workspace throws a `ProofAgeError` with `code` `TEST_WORKSPACE_ONLY`; a verification that
+is already final throws a `ValidationError` with `code` `INVALID_STATUS`.
+
+### Webhook subscriptions
+
+Subscribe extra URLs to the decision webhooks, beside the workspace webhook URL set in the console
+(REST hooks, as Zapier uses them). A workspace can have up to 50.
+
+```typescript
+const subscription = (await client.webhookSubscriptions().create({
+  url: 'https://example.com/proofage/webhook',
+  statuses: ['approved', 'declined'], // omit or null for every decision status
+  include_document_data: false,       // the default: no document, fingerprint_signals or performed_by
+}))!;
+
+const { data } = (await client.webhookSubscriptions().list())!;
+
+await client.webhookSubscriptions().delete(subscription.id);
+```
+
+Deliveries have the same body, headers and signature as the workspace webhook (verify them with
+the helpers below), carry only `status.updated` events, and leave out the personal data unless
+`include_document_data` is true. A delivery answered with `410 Gone` deletes the subscription. A
+51st subscription throws a `ValidationError` with `code` `WEBHOOK_SUBSCRIPTION_LIMIT`.
 
 ### Server-side capture flow
 
