@@ -322,11 +322,22 @@ export interface ManualModeration {
   source_reason?: string | null;
 }
 
+/** Webhook event kinds. Open, so a value added upstream does not break compilation. */
+export type WebhookEvent = 'status.updated' | 'data.updated' | (string & {});
+
 /**
  * Webhook JSON body (ProofAge outbound webhook).
  */
 export interface WebhookPayload {
   verification_id: string;
+  /**
+   * What happened: `status.updated` (the verification moved to `status`) or `data.updated` (someone
+   * corrected the document fields the reader got wrong; `status` is the current one, unchanged).
+   * Optional: a payload without it, such as a retry of a delivery created before the field existed,
+   * means `status.updated`. The type stays open so an event added later does not break compilation.
+   * Read it before `status`.
+   */
+  event?: WebhookEvent;
   status: VerificationStatus;
   external_id: string | null;
   external_metadata: Record<string, unknown> | null;
@@ -340,6 +351,8 @@ export interface WebhookPayload {
    * and nulls every field.
    */
   document?: VerificationDocument['document'];
+  /** Only on `data.updated`: the names of the `document.fields` the correction changed (names only, no values). */
+  changed_fields?: string[];
   /** Only when a duplicate face was found. */
   duplicate_detected?: true;
   /** Only when a duplicate face was found. */

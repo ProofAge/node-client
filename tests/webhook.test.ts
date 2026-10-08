@@ -347,6 +347,44 @@ describe('handleWebhook', () => {
     expect(old.payload?.document).toBeUndefined();
   });
 
+  it('parses a data.updated webhook: current status, corrected document, changed_fields', async () => {
+    const result = await handleWebhook(
+      buildRequest({
+        verification_id: 'v1',
+        event: 'data.updated',
+        status: 'approved',
+        external_id: 'user_1',
+        external_metadata: null,
+        reason: null,
+        timestamp: '2026-10-08T09:30:00+00:00',
+        document: {
+          type: 'id',
+          issuing_country: 'FR',
+          issuing_subdivision: null,
+          fields: { first_name: 'JEAN', last_name: 'MARTIN', date_of_birth: '1988-02-11', document_number: 'X1' },
+        },
+        changed_fields: ['date_of_birth'],
+      }),
+      { secretKey, apiKey },
+    );
+
+    expect(result.verified).toBe(true);
+    expect(result.payload?.event).toBe('data.updated');
+    expect(result.payload?.status).toBe('approved');
+    expect(result.payload?.changed_fields).toEqual(['date_of_birth']);
+    expect(result.payload?.document?.fields.date_of_birth).toBe('1988-02-11');
+  });
+
+  it('leaves event undefined on a body without it, which means status.updated', async () => {
+    const result = await handleWebhook(
+      buildRequest({ verification_id: 'v1', status: 'approved', timestamp: '2025-01-01T00:00:00Z' }),
+      { secretKey, apiKey },
+    );
+
+    expect(result.payload?.event).toBeUndefined();
+    expect(result.payload?.changed_fields).toBeUndefined();
+  });
+
   it('returns error for invalid signature', async () => {
     const req = new Request('http://localhost/webhook', {
       method: 'POST',

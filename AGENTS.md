@@ -123,7 +123,8 @@ is typed as `WebhookPayload`:
 ```
 {
   "verification_id": string,
-  "status": string,
+  "event"?: "status.updated"|"data.updated",   // absent = status.updated (a retry of a delivery created before the field existed)
+  "status": string,                            // on data.updated: the current status, unchanged
   "external_id": string|null,                  // always present
   "external_metadata": object|null,            // always present
   "reason": string|null,                       // always present; a code only on resubmission_requested / declined
@@ -132,6 +133,7 @@ is typed as `WebhookPayload`:
   "duplicate_detected"?: true,                 // the three duplicate_* keys appear together, only when a duplicate face was found
   "duplicate_count"?: number,
   "duplicate_of"?: { "verification_id": string, "external_id": string|null },
+  "changed_fields"?: string[],                 // only on data.updated: names of what the correction changed (document.fields keys, or type, issuing_country, issuing_subdivision), no values
   "fingerprint_signals"?: object,              // ip_address, ip_country_code, ip_timezone, device_timezone, ... when collected
   "manual_moderation"?: {                      // after a console approve/decline
     "action": "approve"|"decline", "reason": string, "source": "tenant_admin"|"landlord_admin",
@@ -140,6 +142,14 @@ is typed as `WebhookPayload`:
   }
 }
 ```
+
+**Dispatch on `event` first.** `status.updated` is every webhook you already know: the verification moved
+to `status`. `data.updated` means someone on the tenant's team corrected document fields the reader got
+wrong (console or MCP): `status` is the current one and a correction never changes it, `document` holds the
+corrected values and `changed_fields` names what changed. It is not a decision, so update the stored
+document fields and leave the verification's status alone; a handler that ignores `event` sees what looks
+like a resend of the same status, which it must tolerate anyway (de-duplicate on the delivery id, and make
+applying a status idempotent). Treat an absent `event` as `status.updated` and an unknown value as ignorable.
 
 `document` is on every decision webhook, whatever the status: the same object `document()` returns
 (`type`, `issuing_country`, `fields`), without `media` and `meta`, typed as

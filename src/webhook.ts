@@ -173,6 +173,7 @@ export async function handleWebhook(request: Request, options: HandleWebhookOpti
  * @example
  * // Next.js App Router — entire route in one line:
  * export const POST = webhookHandler(async (payload) => {
+ *   if (payload.event === 'data.updated') return; // corrected document fields, not a decision
  *   console.log('Verified:', payload.verification_id, payload.status);
  * });
  */

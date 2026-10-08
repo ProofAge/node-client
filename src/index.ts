@@ -49,6 +49,7 @@ export type {
   Verification,
   VerificationDocument,
   VerificationStatus,
+  WebhookEvent,
   WebhookPayload,
   WorkspaceInfo,
 } from './types.js';

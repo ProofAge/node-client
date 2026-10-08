@@ -179,6 +179,12 @@ import { webhookHandler } from '@proofage/node';
 
 // Keys and tolerance resolve from env automatically
 export const POST = webhookHandler(async (payload) => {
+  // Read `event` first. An absent `event` means `status.updated`.
+  if (payload.event === 'data.updated') {
+    // Someone corrected document fields: `payload.document` has the new values and
+    // `payload.changed_fields` the names. The status is unchanged, so this is not a decision.
+    return;
+  }
   console.log(payload.verification_id, payload.status);
   // your business logic: update DB, send email, etc.
 });
