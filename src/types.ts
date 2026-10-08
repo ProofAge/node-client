@@ -405,7 +405,11 @@ export interface ManualModeration {
   reason: string;
   /** `tenant_admin` or `landlord_admin`. */
   source: string;
-  performed_by: {
+  /**
+   * Who moderated. Optional: a webhook subscription's deliveries leave it out unless the
+   * subscription was created with `include_document_data: true`.
+   */
+  performed_by?: {
     id: number;
     name: string | null;
     email: string | null;
@@ -443,7 +447,8 @@ export interface WebhookPayload {
    * The same object `GET /v1/verifications/{id}/document` returns (without `media`), on every decision
    * webhook. Optional on the type: a body sent before this was added, and the body of a retry after
    * the person's data was erased, parse too. After erasure a resend keeps `type` and `issuing_country`
-   * and nulls every field.
+   * and nulls every field. Left out of a webhook subscription's deliveries unless it has
+   * `include_document_data`.
    */
   document?: VerificationDocument['document'];
   /** Only on `data.updated`: the names of the `document.fields` the correction changed (names only, no values). */
@@ -457,7 +462,10 @@ export interface WebhookPayload {
     verification_id: string;
     external_id: string | null;
   };
-  /** Technical signals (ip_address, ip_country_code, ip_timezone, device_timezone, ...), when any were collected. */
+  /**
+   * Technical signals (ip_address, ip_country_code, ip_timezone, device_timezone, ...), when any were
+   * collected. Left out of a webhook subscription's deliveries unless it has `include_document_data`.
+   */
   fingerprint_signals?: Record<string, unknown>;
   manual_moderation?: ManualModeration;
 }

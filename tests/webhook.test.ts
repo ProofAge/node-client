@@ -385,6 +385,30 @@ describe('handleWebhook', () => {
     expect(result.payload?.changed_fields).toBeUndefined();
   });
 
+  it('parses a webhook subscription delivery without the personal data', async () => {
+    // A subscription created without include_document_data receives no document, no
+    // fingerprint_signals and no manual_moderation.performed_by.
+    const result = await handleWebhook(
+      buildRequest({
+        verification_id: 'v1',
+        event: 'status.updated',
+        status: 'declined',
+        external_id: 'user_1',
+        external_metadata: null,
+        reason: 'document.face.mismatch',
+        timestamp: '2026-10-08T09:30:00+00:00',
+        manual_moderation: { action: 'decline', reason: 'Face does not match', source: 'tenant_admin' },
+      }),
+      { secretKey, apiKey },
+    );
+
+    expect(result.verified).toBe(true);
+    expect(result.payload?.document).toBeUndefined();
+    expect(result.payload?.fingerprint_signals).toBeUndefined();
+    expect(result.payload?.manual_moderation?.action).toBe('decline');
+    expect(result.payload?.manual_moderation?.performed_by).toBeUndefined();
+  });
+
   it('returns error for invalid signature', async () => {
     const req = new Request('http://localhost/webhook', {
       method: 'POST',
