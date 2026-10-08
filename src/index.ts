@@ -8,6 +8,7 @@ export {
 export type { ProofAgeErrorOptions, WebhookVerificationErrorCode } from './errors.js';
 export {
   buildApiPath,
+  buildQueryString,
   canonicalizeArrayForQuery,
   generateHmacSignature,
   generateHmacSignatureForFiles,
@@ -16,7 +17,9 @@ export {
   serializeJsonBody,
   sha256Hex,
   toMultipartFields,
+  withQuery,
 } from './hmac.js';
+export type { QueryValue } from './hmac.js';
 export { generateWebhookSignature, handleWebhook, verifyWebhookSignature, webhookHandler } from './webhook.js';
 export type { HandleWebhookOptions, HandleWebhookResult, VerifyWebhookSignatureInput } from './webhook.js';
 export { BLOCK_FACE_REASON_CODES } from './types.js';

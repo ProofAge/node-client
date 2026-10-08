@@ -2,6 +2,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   buildApiPath,
+  buildQueryString,
   canonicalizeArrayForQuery,
   generateHmacSignature,
   generateHmacSignatureForFiles,
@@ -9,6 +10,7 @@ import {
   rawUrlEncode,
   serializeJsonBody,
   toMultipartFields,
+  withQuery,
 } from '../src/hmac.js';
 
 describe('serializeJsonBody', () => {
@@ -185,5 +187,36 @@ describe('generateHmacSignatureForFiles', () => {
     const canonical = `POST/v1/verifications/ver_123/media\n${fieldsString}\n${sorted}`;
     const expected = createHmac('sha256', secret).update(canonical, 'utf8').digest('hex');
     expect(sig).toBe(expected);
+  });
+});
+
+describe('buildQueryString', () => {
+  it('sorts keys and RFC 3986-encodes them as Symfony normalizeQueryString() does', () => {
+    // PHP: Request::normalizeQueryString('status=approved,declined&limit=5&external_id=a b')
+    expect(buildQueryString({ status: 'approved,declined', limit: 5, external_id: 'a b' })).toBe(
+      'external_id=a%20b&limit=5&status=approved%2Cdeclined',
+    );
+  });
+
+  it("encodes what encodeURIComponent leaves bare: ! ' ( ) *", () => {
+    expect(buildQueryString({ q: "it's (a)*!~" })).toBe('q=it%27s%20%28a%29%2A%21~');
+  });
+
+  it('drops null and undefined parameters and sends booleans as 1/0', () => {
+    expect(buildQueryString({ a: undefined, b: null, c: true, d: false, e: '' })).toBe('c=1&d=0&e=');
+  });
+
+  it('is empty when nothing is left, so no ? is appended', () => {
+    expect(buildQueryString({ a: undefined })).toBe('');
+    expect(withQuery('verifications', { a: undefined })).toBe('verifications');
+    expect(withQuery('verifications', { limit: 2 })).toBe('verifications?limit=2');
+  });
+
+  it('signs the query as part of the path', () => {
+    const endpoint = withQuery('verifications', { status: 'approved', limit: 10 });
+    const expected = createHmac('sha256', 'sk')
+      .update('GET/v1/verifications?limit=10&status=approved', 'utf8')
+      .digest('hex');
+    expect(generateHmacSignature('sk', 'GET', 'v1', endpoint, '')).toBe(expected);
   });
 });

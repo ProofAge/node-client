@@ -16,7 +16,8 @@ export function buildApiPath(version: string, endpoint: string): string {
 
 /**
  * HMAC for JSON/non-file requests.
- * Canonical: METHOD + path + rawJsonBody (see ProofAge Laravel client).
+ * Canonical: METHOD + path + rawJsonBody (see ProofAge Laravel client). A query string is part
+ * of the path: pass `endpoint` as `withQuery(endpoint, params)` so it is already normalised.
  */
 export function generateHmacSignature(
   secretKey: string,
@@ -132,6 +133,35 @@ export function phpHttpBuildQueryRfc3986(data: Record<string, unknown>): string 
   }
 
   return parts.join('&');
+}
+
+/** A query parameter value. `undefined` and `null` leave the parameter out. */
+export type QueryValue = string | number | boolean | null | undefined;
+
+/**
+ * The query string exactly as the API signs it: Symfony's `Request::normalizeQueryString()`,
+ * which the HMAC middleware reads through `getQueryString()`. Keys are sorted and keys and
+ * values are `rawurlencode`d (RFC 3986: a space is `%20`, a comma `%2C`); `null`/`undefined`
+ * parameters are dropped and booleans are `1`/`0`. The client sends this same string, so the
+ * server's re-normalisation is a no-op. Returns `''` when no parameter is left.
+ */
+export function buildQueryString(params: Record<string, QueryValue>): string {
+  const parts: string[] = [];
+  for (const key of Object.keys(params).sort()) {
+    const value = params[key];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    const text = typeof value === 'boolean' ? (value ? '1' : '0') : String(value);
+    parts.push(`${rawUrlEncode(key)}=${rawUrlEncode(text)}`);
+  }
+  return parts.join('&');
+}
+
+/** `endpoint?query`, or the bare endpoint when the query is empty: the string both signed and requested. */
+export function withQuery(endpoint: string, params: Record<string, QueryValue> = {}): string {
+  const query = buildQueryString(params);
+  return query === '' ? endpoint : `${endpoint}?${query}`;
 }
 
 export function sha256Hex(buffer: Buffer | Uint8Array): string {

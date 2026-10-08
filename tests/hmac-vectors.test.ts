@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { generateHmacSignature, generateHmacSignatureForFiles } from '../src/hmac.js';
+import { generateHmacSignature, generateHmacSignatureForFiles, withQuery } from '../src/hmac.js';
 import { verifyWebhookSignature } from '../src/webhook.js';
 
 /**
@@ -12,7 +12,15 @@ import { verifyWebhookSignature } from '../src/webhook.js';
  */
 interface Vectors {
   secret: string;
-  json: Array<{ name: string; method: string; path: string; query?: string; body: string; expected: string }>;
+  json: Array<{
+    name: string;
+    method: string;
+    path: string;
+    query?: string;
+    body: string;
+    canonical: string;
+    expected: string;
+  }>;
   multipart: Array<{
     name: string;
     method: string;
@@ -35,11 +43,16 @@ function splitPath(path: string): { version: string; endpoint: string } {
 
 describe('shared HMAC vectors', () => {
   describe('JSON requests', () => {
-    // The SDK never sends a query string, so the query-normalisation vector does not apply.
-    for (const v of vectors.json.filter((x) => x.query === undefined)) {
+    for (const v of vectors.json) {
       it(v.name, () => {
         const { version, endpoint } = splitPath(v.path);
-        expect(generateHmacSignature(vectors.secret, v.method, version, endpoint, v.body)).toBe(v.expected);
+        // A vector's query is what some client might send. The SDK rebuilds it from its
+        // parameters (URLSearchParams decodes `+` as a space, as PHP does), and the string it
+        // builds is the one it both requests and signs, so it must match the canonical form.
+        const signed =
+          v.query === undefined ? endpoint : withQuery(endpoint, Object.fromEntries(new URLSearchParams(v.query)));
+        expect(`${v.method.toUpperCase()}/${version}/${signed}${v.body}`).toBe(v.canonical);
+        expect(generateHmacSignature(vectors.secret, v.method, version, signed, v.body)).toBe(v.expected);
       });
     }
   });

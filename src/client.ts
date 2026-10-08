@@ -4,7 +4,9 @@ import {
   generateHmacSignatureForFiles,
   serializeJsonBody,
   toMultipartFields,
+  withQuery,
 } from './hmac.js';
+import type { QueryValue } from './hmac.js';
 import { VerificationResource } from './resources/verifications.js';
 import { buildSdkHeader, resolveUserAgent, SDK_HEADER } from './sdk-identification.js';
 import { WorkspaceResource } from './resources/workspace.js';
@@ -157,7 +159,7 @@ export class ProofAgeClient {
 
   /**
    * `X-ProofAge-Sdk` and `User-Agent`, fixed at construction and sent on every request.
-   * Neither is signed: the HMAC covers only method, path and body.
+   * Neither is signed: the HMAC covers only method, path (with its query string) and body.
    */
   private readonly identificationHeaders: Readonly<Record<string, string>>;
 
@@ -212,12 +214,18 @@ export class ProofAgeClient {
     return this.config;
   }
 
+  /**
+   * Send a signed request. `query` is built into the URL in the API's normalised form (sorted
+   * keys, RFC 3986 encoding, `null`/`undefined` dropped), and that same string is signed.
+   */
   async makeRequest(
     method: string,
     endpoint: string,
     data: Record<string, unknown> = {},
     files: Record<string, { buffer: Buffer; filename?: string }> = {},
+    query: Record<string, QueryValue> = {},
   ): Promise<{ status: number; json: () => Promise<unknown>; text: () => Promise<string> }> {
+    endpoint = withQuery(endpoint, query);
     const url = `${this.config.baseUrl}/${this.config.version}/${endpoint.replace(/^\//, '')}`;
     const hasFiles = Object.keys(files).length > 0;
 
