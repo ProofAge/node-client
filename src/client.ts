@@ -8,6 +8,7 @@ import {
 } from './hmac.js';
 import type { QueryValue } from './hmac.js';
 import { VerificationResource } from './resources/verifications.js';
+import { WebhookSubscriptionResource } from './resources/webhook-subscriptions.js';
 import { buildSdkHeader, resolveUserAgent, SDK_HEADER } from './sdk-identification.js';
 import { WorkspaceResource } from './resources/workspace.js';
 import type { ApiErrorData, ProofAgeConfig } from './types.js';
@@ -208,6 +209,10 @@ export class ProofAgeClient {
 
   verifications(verificationId?: string): VerificationResource {
     return new VerificationResource(this, verificationId);
+  }
+
+  webhookSubscriptions(): WebhookSubscriptionResource {
+    return new WebhookSubscriptionResource(this);
   }
 
   getConfig(): Readonly<typeof this.config> {

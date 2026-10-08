@@ -854,3 +854,129 @@ describe('setting a test outcome', () => {
     expect([bad, ok]).toHaveLength(2);
   });
 });
+
+describe('webhook subscriptions', () => {
+  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 3, retryDelay: 1 };
+
+  const subscription = {
+    id: '0199c4b2-7d1e-7a3f-9c0e-5b6a7c8d9e0f',
+    url: 'https://hooks.zapier.com/hooks/standard/12345678/abcdef/',
+    statuses: ['approved', 'declined'],
+    include_document_data: false,
+    created_at: '2026-10-08T12:00:00+00:00',
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('creates a subscription and resolves to it', async () => {
+    const spy = vi.fn(async () => new Response(JSON.stringify(subscription), { status: 201 }));
+    vi.stubGlobal('fetch', spy);
+
+    const result = await new ProofAgeClient(baseConfig).webhookSubscriptions().create({
+      url: subscription.url,
+      statuses: ['approved', 'declined'],
+      include_document_data: false,
+    });
+
+    expect(result).toEqual(subscription);
+    const [url, init] = fetchCall(spy);
+    expect(url).toBe('https://api.test.com/v1/webhook-subscriptions');
+    expect(init.method).toBe('POST');
+    const body =
+      '{"url":"https://hooks.zapier.com/hooks/standard/12345678/abcdef/","statuses":["approved","declined"],"include_document_data":false}';
+    expect(init.body).toBe(body);
+    const expected = createHmac('sha256', 'test-secret-key')
+      .update(`POST/v1/webhook-subscriptions${body}`, 'utf8')
+      .digest('hex');
+    expect((init.headers as Record<string, string>)['X-HMAC-Signature']).toBe(expected);
+  });
+
+  it('reads null statuses as every decision status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ ...subscription, statuses: null }), { status: 201 })),
+    );
+    const result = await new ProofAgeClient(baseConfig).webhookSubscriptions().create({ url: subscription.url });
+    expect(result?.statuses).toBeNull();
+  });
+
+  it('surfaces WEBHOOK_SUBSCRIPTION_LIMIT as a ValidationError', async () => {
+    const body = {
+      error: { code: 'WEBHOOK_SUBSCRIPTION_LIMIT', message: 'A workspace can have at most 50 webhook subscriptions. Delete one first.' },
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status: 422 })));
+
+    const error = await new ProofAgeClient(baseConfig)
+      .webhookSubscriptions()
+      .create({ url: subscription.url })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ValidationError);
+    expect((error as ValidationError).code).toBe('WEBHOOK_SUBSCRIPTION_LIMIT');
+  });
+
+  it('does not retry a create on 5xx: the subscription may exist', async () => {
+    const spy = vi.fn(async () => new Response(JSON.stringify({ message: 'Server Error' }), { status: 502 }));
+    vi.stubGlobal('fetch', spy);
+
+    await expect(new ProofAgeClient(baseConfig).webhookSubscriptions().create({ url: subscription.url })).rejects.toThrow(
+      ProofAgeError,
+    );
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it('lists the subscriptions', async () => {
+    const spy = vi.fn(async () => new Response(JSON.stringify({ data: [subscription] }), { status: 200 }));
+    vi.stubGlobal('fetch', spy);
+
+    const result = await new ProofAgeClient(baseConfig).webhookSubscriptions().list();
+
+    expect(result?.data).toEqual([subscription]);
+    const [url, init] = fetchCall(spy);
+    expect(url).toBe('https://api.test.com/v1/webhook-subscriptions');
+    expect(init.method).toBe('GET');
+  });
+
+  it('deletes a subscription on the empty 204 and signs the path', async () => {
+    const spy = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', spy);
+
+    const result = await new ProofAgeClient(baseConfig).webhookSubscriptions().delete(subscription.id);
+
+    expect(result).toBeNull();
+    const [url, init] = fetchCall(spy);
+    expect(url).toBe(`https://api.test.com/v1/webhook-subscriptions/${subscription.id}`);
+    expect(init.method).toBe('DELETE');
+    expect(init.body).toBeUndefined();
+    const expected = createHmac('sha256', 'test-secret-key')
+      .update(`DELETE/v1/webhook-subscriptions/${subscription.id}`, 'utf8')
+      .digest('hex');
+    expect((init.headers as Record<string, string>)['X-HMAC-Signature']).toBe(expected);
+  });
+
+  it('surfaces a 404 for an unknown subscription', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ message: 'Resource not found' }), { status: 404 })));
+
+    const error = await new ProofAgeClient(baseConfig)
+      .webhookSubscriptions()
+      .delete('missing')
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProofAgeError);
+    expect((error as ProofAgeError).statusCode).toBe(404);
+    expect((error as ProofAgeError).message).toBe('Resource not found');
+  });
+
+  it('does not retry a delete on 5xx', async () => {
+    const spy = vi.fn(async () => new Response(JSON.stringify({ message: 'Server Error' }), { status: 500 }));
+    vi.stubGlobal('fetch', spy);
+
+    await expect(new ProofAgeClient(baseConfig).webhookSubscriptions().delete(subscription.id)).rejects.toThrow(
+      ProofAgeError,
+    );
+    expect(spy).toHaveBeenCalledOnce();
+  });
+});

@@ -188,6 +188,31 @@ export interface SetTestOutcomePayload {
   reason?: string | null;
 }
 
+/** The decision statuses a webhook subscription can be limited to. */
+export const WEBHOOK_SUBSCRIPTION_STATUSES = [
+  'approved',
+  'declined',
+  'resubmission_requested',
+  'abandoned',
+  'expired',
+  'review',
+] as const;
+
+export type WebhookSubscriptionStatus = (typeof WEBHOOK_SUBSCRIPTION_STATUSES)[number];
+
+/** POST /v1/webhook-subscriptions body. */
+export interface CreateWebhookSubscriptionPayload {
+  /** A public http(s) URL (<= 2048); private, local and cloud-metadata addresses are refused. */
+  url: string;
+  /** Only send these statuses. Omit it, or send null, for every decision status. */
+  statuses?: readonly WebhookSubscriptionStatus[] | null;
+  /**
+   * Include `document`, `fingerprint_signals` and `manual_moderation.performed_by` in the
+   * deliveries. Defaults to false, so personal data stays out of the subscriber's logs.
+   */
+  include_document_data?: boolean;
+}
+
 /* ----------------------------------------------------------------------------
  * Response shapes (snake_case, matching the API). These are the authoritative
  * response contract: the bundled openapi.json cannot describe most response
@@ -281,6 +306,21 @@ export interface VerificationList {
   data: Verification[];
   /** Pass as `cursor` for the next page; null on the last page. */
   next_cursor: string | null;
+}
+
+/** POST /v1/webhook-subscriptions (201), and each entry of GET /v1/webhook-subscriptions. */
+export interface WebhookSubscription {
+  id: string;
+  url: string;
+  /** Null when the subscription receives every decision status. */
+  statuses: Array<WebhookSubscriptionStatus | (string & {})> | null;
+  include_document_data: boolean;
+  created_at: string;
+}
+
+/** GET /v1/webhook-subscriptions: every subscription of the workspace, newest first. */
+export interface WebhookSubscriptionList {
+  data: WebhookSubscription[];
 }
 
 /** POST /v1/verifications (201) also returns the hosted session `url`. */

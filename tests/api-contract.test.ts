@@ -3,6 +3,7 @@ import {
   BLOCK_FACE_REASON_CODES,
   LIST_VERIFICATIONS_STATUSES,
   TEST_VERIFICATION_OUTCOMES,
+  WEBHOOK_SUBSCRIPTION_STATUSES,
 } from '../src/types.js';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { ConsentInfo } from '../src/types.js';
@@ -159,6 +160,25 @@ const OPERATIONS: Record<string, OperationContract> = {
     request: ['reason', 'reason_code'],
     response: [],
   },
+  'webhookSubscriptions.create': {
+    method: 'POST',
+    path: '/webhook-subscriptions',
+    request: ['url', 'statuses', 'include_document_data'],
+    responseStatus: '201',
+    response: ['id', 'url', 'statuses', 'include_document_data', 'created_at'],
+  },
+  'webhookSubscriptions.list': {
+    method: 'GET',
+    path: '/webhook-subscriptions',
+    request: [],
+    response: ['data'],
+  },
+  'webhookSubscriptions.delete': {
+    method: 'DELETE',
+    path: '/webhook-subscriptions/{subscription}',
+    request: [],
+    response: [],
+  },
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -271,6 +291,12 @@ describe('API contract drift', () => {
     expect(sorted(dataItemProperties('/verifications', 'GET'))).toEqual(sorted(OPERATIONS['verifications.find']!.response));
   });
 
+  it('a listed webhook subscription has the shape create() returns', () => {
+    expect(sorted(dataItemProperties('/webhook-subscriptions', 'GET'))).toEqual(
+      sorted(OPERATIONS['webhookSubscriptions.create']!.response),
+    );
+  });
+
   it('response fields match the spec for describable endpoints', () => {
     const checked: string[] = [];
     for (const [name, op] of Object.entries(OPERATIONS)) {
@@ -291,6 +317,8 @@ describe('API contract drift', () => {
       'verifications.find',
       'verifications.list',
       'verifications.setTestOutcome',
+      'webhookSubscriptions.create',
+      'webhookSubscriptions.list',
       'workspace.get',
       'workspace.getConsent',
     ]);
@@ -306,6 +334,13 @@ describe('API contract drift', () => {
         expect(resp?.content?.['application/json'], `[${name}] ${code} carries a JSON body`).toBeUndefined();
       }
     }
+  });
+
+  it('a webhook subscription is deleted with an empty 204', () => {
+    // Scramble attaches a `string` JSON schema to the 204; a 204 carries no body whatever it says.
+    const responses: Record<string, Json> =
+      spec.paths['/webhook-subscriptions/{subscription}']?.delete?.responses ?? {};
+    expect(Object.keys(responses).filter((code) => code.startsWith('2'))).toEqual(['204']);
   });
 
   it('AGENTS.md documents every endpoint', () => {
@@ -335,6 +370,12 @@ describe('API contract drift', () => {
   it('the outcomes setTestOutcome() offers are the ones the API accepts', () => {
     expect(TEST_VERIFICATION_OUTCOMES).toEqual(
       spec.components?.schemas?.SetTestVerificationOutcomeRequest?.properties?.status?.enum,
+    );
+  });
+
+  it('the statuses a webhook subscription takes are the ones the API accepts', () => {
+    expect(WEBHOOK_SUBSCRIPTION_STATUSES).toEqual(
+      spec.components?.schemas?.StoreWebhookSubscriptionRequest?.properties?.statuses?.items?.enum,
     );
   });
 
