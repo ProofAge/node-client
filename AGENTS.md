@@ -1,13 +1,14 @@
 # ProofAge Node Client — API contract for agents
 
-This package wraps the ProofAge v1 HTTP API. Methods on `client.workspace()` and
-`client.verifications(id)` return decoded JSON, typed by the interfaces in `src/types.ts`
+This package wraps the ProofAge v1 HTTP API. Methods on `client.workspace()`,
+`client.verifications(id)` and `client.webhookSubscriptions()` return decoded JSON, typed by the interfaces in `src/types.ts`
 (and re-exported from the package root). A machine-readable spec ships at `openapi.json`
 (authoritative for endpoints and request bodies; it describes most response bodies too, and
 where it does not, the response interfaces below are authoritative).
 
 All requests send `X-API-Key` and `X-HMAC-Signature`. Request bodies use **snake_case** to
-match the API. Responses are never wrapped in `data`.
+match the API. A single object is never wrapped in `data`; the list endpoints answer
+`{ data: [...] }` (plus `next_cursor` on `GET /verifications`).
 
 Every request also identifies the SDK: `X-ProofAge-Sdk: node/<package version>` (wrapper
 packages prepend their own `<name>/<version>` tokens via the `sdkTokens` option, outermost
@@ -27,24 +28,29 @@ Every non-2xx response throws. `AuthenticationError` (401) and `ValidationError`
 `code` (the API's machine-readable code, when sent), `errorData` and the raw `responseBody`.
 The API uses four error body shapes; the client reads all of them:
 
-- `{ error: { code, message } }` — most errors (401 auth, 429 `RATE_LIMIT`, submit 422, media download 404). `errorData` is the inner object.
+- `{ error: { code, message } }` — most errors (401 auth, 429 `RATE_LIMIT`, submit 422, media download 404, `403 TEST_WORKSPACE_ONLY` and `422 INVALID_STATUS` on a test outcome, `422 WEBHOOK_SUBSCRIPTION_LIMIT`). `errorData` is the inner object.
 - `{ code, message, ...extra }` — flat: `402 PAYMENT_METHOD_REQUIRED` (extra: `free_verifications_remaining`, `trial_ends_at`, `trial_active`) and media-quality rejections on upload (`422`, e.g. `FACE_NOT_FOUND`; `500 VALIDATION_SERVICE_UNAVAILABLE`). `errorData` is the whole body.
 - `{ message, errors }` — request validation (`422`). `code` is undefined; `getErrors()` has the fields.
-- `{ message }` — `403` (verification not in your workspace) and `404` (`Resource not found`).
+- `{ message }` — `403` (verification not in your workspace) and `404` (`Resource not found`, e.g. an unknown webhook subscription).
 
 A 2xx response with an empty body resolves to `null`; a non-empty 2xx body that is not JSON
 throws `ProofAgeError` (almost always a `baseUrl` pointing at a website rather than the API).
 
-Retries: GETs retry on 408, 429, 5xx, timeouts and network errors. POSTs retry **only** on 429
-and on network errors raised before the request was sent (DNS failure, connection refused) —
-never on 5xx or timeouts, where the server may already have created the verification or
-stored the upload. A 429 waits for `Retry-After` when present, else `retryDelay × attempt`.
+Retries: GETs retry on 408, 429, 5xx, timeouts and network errors. POSTs and DELETEs retry
+**only** on 429 and on network errors raised before the request was sent (DNS failure,
+connection refused) — never on 5xx or timeouts, where the server may already have created the
+verification, stored the upload, set the test outcome or created/deleted the subscription. A 429 waits for `Retry-After` when present, else `retryDelay × attempt`.
 
 ## Auth / HMAC
 
 - `X-API-Key`: workspace API key (plaintext; the server SHA256-hashes it).
 - `X-HMAC-Signature`: hex HMAC-SHA256 with the workspace secret key over a canonical string:
   - JSON / no-file requests: `METHOD + /{version}/{path} + rawJsonBody` (direct concatenation, no delimiter).
+    A query string is part of the path: `METHOD/{version}/{path}?{query} + rawJsonBody`, where `{query}` is
+    the query as the server normalises it (Symfony `Request::normalizeQueryString()`): keys sorted, keys and
+    values `rawurlencode`d (RFC 3986: space `%20`, comma `%2C`). The client sends that exact string in the
+    URL and signs it; `null`/`undefined` parameters are not sent. E.g.
+    `GET/v1/verifications?external_id=user%2042&limit=5&status=approved%2Cdeclined`.
   - Multipart (file) requests: `METHOD/{version}/{path}\n{fields}\n{comma-joined sorted sha256(file) hashes}`,
     where `{fields}` is PHP `http_build_query(ksort($fields), '', '&', PHP_QUERY_RFC3986)` — keys
     sorted, values `rawurlencode`d (so `! ' ( ) *` are percent-encoded too). The server signs the
@@ -69,6 +75,20 @@ Errors: `402` flat `{ code: "PAYMENT_METHOD_REQUIRED", message, free_verificatio
 
 - `DuplicateCheck`: `{ checked: boolean, duplicate_count: number, duplicates: [ { verification_id: string, external_id: string|null, similarity_score: number, verified_at: string|null } ] }` — always present.
 - `Erasure`: `{ erased_at: string, scope: "personal_data", reason: string|null, requested_via: "customer"|"proofage"|"retention"|null }` — `null` until the verification's personal data is erased. `reason` is an erasure reason code (`data_subject_request`, `customer_request`, `retention_policy`, `test_data`, `other`) or null if unrecorded.
+
+### GET /verifications — `client.verifications().list(params?)` → `VerificationList`
+Query (`ListVerificationsParams`): `{ status?: ListVerificationsStatus | ListVerificationsStatus[] | string, external_id?: string(<=255), limit?: number(1-100, default 20), cursor?: string }`. `status` is one or more of `created`, `started`, `submitted`, `resubmission_requested`, `approved`, `declined`, `abandoned`, `expired`, `review` (`LIST_VERIFICATIONS_STATUSES`); an array is sent comma-separated, and a comma-separated string is sent as is. `documents_required` is not a filter value: such a verification is stored as `started`. `external_id` is an exact, case-sensitive match.
+Response: `{ data: Verification[], next_cursor: string|null }` — the workspace's verifications, newest first, each in the shape `GET /verifications/{verification}` returns. Pass `next_cursor` as `cursor` for the next page, with the same filters; it is `null` on the last page.
+Errors: `422` `{ message, errors }` for an unknown status or an out-of-range `limit`.
+
+```ts
+let cursor: string | undefined;
+do {
+  const page = (await client.verifications().list({ status: ['approved', 'declined'], limit: 100, cursor }))!;
+  for (const v of page.data) { /* ... */ }
+  cursor = page.next_cursor ?? undefined;
+} while (cursor);
+```
 
 ### GET /verifications/{verification} — `client.verifications(id).get()` / `client.verifications().find(id)` → `Verification`
 Request: none.
@@ -105,13 +125,37 @@ Response: `{ verification_id: string, attempt_id: string|null, age_threshold: { 
 Request: `{ reason_code?: BlockFaceReasonCode, reason?: string(<=1000) }`.
 Response: `204 No Content` (method resolves to `null`).
 
+### POST /verifications/{verification}/test-outcome — `client.verifications(id).setTestOutcome({ status, reason })` → `Verification`
+**Test workspaces only.** Finishes the verification with `status` without a person going through the widget, so an integration's handling of each outcome can be tested end to end. A verification nobody has opened is moved through `started` and `submitted` first, so the outcome is the only decision webhooks are sent for. Works from `created`, `started`, `submitted`, `review` and `resubmission_requested`.
+Request (`SetTestOutcomePayload`): `{ status: "approved"|"declined"|"review"|"resubmission_requested" (TEST_VERIFICATION_OUTCOMES), reason?: string(<=1000)|null }`. `reason` is a note kept with a `resubmission_requested` outcome in the verification's history, not the decision `reason` code.
+Response: the verification, same shape as `GET /verifications/{verification}`.
+Errors: `403 { error: { code: "TEST_WORKSPACE_ONLY", message } }` in a live workspace (`ProofAgeError`); `403 { message }` for a verification of another workspace; `422 { error: { code: "INVALID_STATUS", message } }` when the verification is already final (`ValidationError`); `422 { message, errors }` for an invalid field. Not retried on a 5xx.
+
+### POST /webhook-subscriptions — `client.webhookSubscriptions().create(body)` → `WebhookSubscription`
+Subscribes a URL to the decision webhooks, in addition to the workspace webhook URL set in the console (REST hooks, e.g. Zapier: subscribe when an automation is turned on, delete when it is turned off). A workspace can have up to 50.
+Request (`CreateWebhookSubscriptionPayload`): `{ url: url(http/https, <=2048, public), statuses?: WebhookSubscriptionStatus[]|null, include_document_data?: boolean (default false) }`. `statuses` are from `approved`, `declined`, `resubmission_requested`, `abandoned`, `expired`, `review` (`WEBHOOK_SUBSCRIPTION_STATUSES`); omit it or send `null` for all of them. Private, local and cloud-metadata URLs are refused.
+Response (`201`): `WebhookSubscription` = `{ id: string, url: string, statuses: string[]|null, include_document_data: boolean, created_at: string }` — `statuses` is `null` when the subscription receives every decision status.
+Errors: `422 { error: { code: "WEBHOOK_SUBSCRIPTION_LIMIT", message } }` at 50 subscriptions (`ValidationError`); `422 { message, errors }` for an invalid field. Not retried on a 5xx.
+Deliveries: the workspace webhook's body and headers (see *Outbound webhook*), `status.updated` events only (never `data.updated`), for the requested statuses. Signed with the secret key that signed the create request while that key exists, then with the active secret key. Unless `include_document_data` is true, the body leaves out `document`, `fingerprint_signals` and `manual_moderation.performed_by`. A delivery answered with `410 Gone` deletes the subscription.
+
+### GET /webhook-subscriptions — `client.webhookSubscriptions().list()` → `WebhookSubscriptionList`
+Request: none.
+Response: `{ data: WebhookSubscription[] }`, newest first.
+
+### DELETE /webhook-subscriptions/{subscription} — `client.webhookSubscriptions().delete(id)` → `null`
+Request: none. Stops the deliveries; deliveries already queued are not sent.
+Response: `204 No Content` (method resolves to `null`). Error: `404 { message: "Resource not found" }` for an id not in the workspace. Not retried on a 5xx.
+
 ## Enums
 
+- `status` filter on `list()` (`ListVerificationsStatus`, `LIST_VERIFICATIONS_STATUSES`): the stored statuses below, without `documents_required`.
+- `status` on `setTestOutcome()` (`TestVerificationOutcome`, `TEST_VERIFICATION_OUTCOMES`): `approved`, `declined`, `review`, `resubmission_requested`.
+- `statuses` on a webhook subscription (`WebhookSubscriptionStatus`, `WEBHOOK_SUBSCRIPTION_STATUSES`): `approved`, `declined`, `resubmission_requested`, `abandoned`, `expired`, `review`.
 - `status` (`VerificationStatus`): one of `created`, `started`, `submitted`, `resubmission_requested`, `approved`, `declined`, `abandoned`, `expired`, `review`, or `documents_required` (the last is surfaced from the latest attempt's state, not a verification status). The type is an open union: handle unknown values.
 - `reason_code` (request field on `blockFace`, the `BlockFaceReasonCode` union / `BLOCK_FACE_REASON_CODES` array): `presentation_attack` (spoof: screen, print or mask), `fraudulent_document` (forged, edited, or not a real document), `scam_or_abuse` (identity may be genuine — blocked for behaviour on your platform), `underage`, `other` (explain in `reason`). Optional over the API, mandatory in the ProofAge consoles: send it whenever a person made the decision, or the block cannot be told apart from an automated one in reporting.
 - `reason` (on `declined` / `resubmission_requested`): dotted codes from the server's reason catalog — illustrative examples: `aml.blocklist.face_match`, `document.face.mismatch`, `verification.age_threshold.failed`. Treat `reason` as an open string.
 
-## Outbound webhook (ProofAge → your `callback_url` / workspace webhook URL)
+## Outbound webhook (ProofAge → your `callback_url` / workspace webhook URL / webhook subscriptions)
 
 Headers: `X-Auth-Client` (api key), `X-Timestamp` (unix seconds), `X-HMAC-Signature`
 (= hex HMAC-SHA256 of `{timestamp}.{rawJsonBody}` with the active secret key),
@@ -137,7 +181,7 @@ is typed as `WebhookPayload`:
   "fingerprint_signals"?: object,              // ip_address, ip_country_code, ip_timezone, device_timezone, ... when collected
   "manual_moderation"?: {                      // after a console approve/decline
     "action": "approve"|"decline", "reason": string, "source": "tenant_admin"|"landlord_admin",
-    "performed_by": { "id": number, "name": string|null, "email": string|null, "role": string|null },
+    "performed_by"?: { "id": number, "name": string|null, "email": string|null, "role": string|null },  // absent on a subscription without include_document_data
     "source_status"?: string, "source_reason"?: string|null   // approve only
   }
 }
@@ -159,7 +203,9 @@ a retry after erasure, may lack it. KYC workspaces receive eleven `fields`; age 
 absent. `null` means not read, not printed, or no document read at all (an age estimate without an ID,
 a test workspace, a wallet check); `document` itself is never null on a current body. A resend and a
 manual retry carry the document as it is now, an automatic retry the body as first sent; after
-erasure only `type` and `issuing_country` remain. The body carries names: verify the signature over
+erasure only `type` and `issuing_country` remain. A webhook subscription created without
+`include_document_data` receives no `document`, no `fingerprint_signals` and no
+`manual_moderation.performed_by`, and never a `data.updated` event. The body carries names: verify the signature over
 the raw bytes before parsing, and do not log it.
 
 ## Keeping this in sync
