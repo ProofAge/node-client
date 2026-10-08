@@ -6,9 +6,12 @@ import type {
   BlockFacePayload,
   CreatedVerification,
   CreateVerificationPayload,
+  ListVerificationsParams,
+  SetTestOutcomePayload,
   UploadMediaPayload,
   Verification,
   VerificationDocument,
+  VerificationList,
 } from '../types.js';
 
 export class VerificationResource {
@@ -20,6 +23,24 @@ export class VerificationResource {
   async create(data: CreateVerificationPayload): Promise<CreatedVerification | null> {
     const res = await this.client.makeRequest('POST', 'verifications', data as Record<string, unknown>);
     return (await res.json()) as CreatedVerification | null;
+  }
+
+  /**
+   * List the workspace's verifications, newest first, each in the shape `find()` returns.
+   *
+   * Filter by `status` (one, an array, or a comma-separated string) and `external_id`; page
+   * with `limit` (1-100, default 20) and the previous page's `next_cursor`, which is null on
+   * the last page. Send the same filters with the cursor.
+   */
+  async list(params: ListVerificationsParams = {}): Promise<VerificationList | null> {
+    const { status, external_id, limit, cursor } = params;
+    const res = await this.client.makeRequest('GET', 'verifications', {}, {}, {
+      status: typeof status === 'string' || status === undefined ? status : status.join(','),
+      external_id,
+      limit,
+      cursor,
+    });
+    return (await res.json()) as VerificationList | null;
   }
 
   async find(id: string): Promise<Verification | null> {
@@ -137,6 +158,28 @@ export class VerificationResource {
     }
     const res = await this.client.makeRequest('GET', `verifications/${this.verificationId}/estimation`);
     return (await res.json()) as AgeEstimation | null;
+  }
+
+  /**
+   * Test workspaces only: finish the verification with `status` (`approved`, `declined`,
+   * `review` or `resubmission_requested`) without a person going through the widget, so the
+   * integration's handling of each outcome can be tested end to end. The decision webhooks are
+   * sent as for a real decision. Resolves to the verification, as `get()` does.
+   *
+   * A live workspace throws a `ProofAgeError` with `code` `TEST_WORKSPACE_ONLY` (403); a
+   * verification already in a final status throws a `ValidationError` with `code`
+   * `INVALID_STATUS` (422). Never retried on a 5xx: the outcome may already be set.
+   */
+  async setTestOutcome(data: SetTestOutcomePayload): Promise<Verification | null> {
+    if (!this.verificationId) {
+      throw new TypeError('Verification ID is required');
+    }
+    const res = await this.client.makeRequest(
+      'POST',
+      `verifications/${this.verificationId}/test-outcome`,
+      data as unknown as Record<string, unknown>,
+    );
+    return (await res.json()) as Verification | null;
   }
 
   /**

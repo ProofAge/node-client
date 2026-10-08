@@ -1,7 +1,8 @@
+import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProofAgeClient } from '../src/client.js';
 import { AuthenticationError, ProofAgeError, ValidationError } from '../src/errors.js';
-import type { UploadMediaPayload } from '../src/types.js';
+import type { SetTestOutcomePayload, UploadMediaPayload } from '../src/types.js';
 
 function mockFetch(status: number, body: unknown) {
   vi.stubGlobal(
@@ -668,5 +669,188 @@ describe('retry policy', () => {
     const ws = await new ProofAgeClient(baseConfig).workspace().get();
     expect(ws?.id).toBe('ws');
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('listing verifications', () => {
+  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 1 };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const page = {
+    data: [
+      {
+        id: 'ver_2',
+        external_id: 'user 42',
+        external_metadata: null,
+        redirect_url: null,
+        status: 'approved',
+        reason: null,
+        duplicate_check: { checked: true, duplicate_count: 0, duplicates: [] },
+        erasure: null,
+        consent_accepted_at: null,
+        created_at: '2026-10-08T12:00:00+00:00',
+        updated_at: '2026-10-08T12:05:00+00:00',
+      },
+    ],
+    next_cursor: 'eyJpZCI6InZlcl8yIn0',
+  };
+
+  it('sends the query in the normalised form and signs exactly that string', async () => {
+    const spy = vi.fn(async () => new Response(JSON.stringify(page), { status: 200 }));
+    vi.stubGlobal('fetch', spy);
+
+    const result = await new ProofAgeClient(baseConfig).verifications().list({
+      status: ['approved', 'declined'],
+      external_id: 'user 42',
+      limit: 5,
+    });
+
+    expect(result?.data[0]?.id).toBe('ver_2');
+    expect(result?.next_cursor).toBe('eyJpZCI6InZlcl8yIn0');
+
+    const [url, init] = fetchCall(spy);
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(url).toBe('https://api.test.com/v1/verifications?external_id=user%2042&limit=5&status=approved%2Cdeclined');
+
+    // The server signs METHOD + path + '?' + Request::normalizeQueryString(), computed here
+    // independently of the SDK's query builder.
+    const expected = createHmac('sha256', 'test-secret-key')
+      .update('GET/v1/verifications?external_id=user%2042&limit=5&status=approved%2Cdeclined', 'utf8')
+      .digest('hex');
+    expect((init.headers as Record<string, string>)['X-HMAC-Signature']).toBe(expected);
+  });
+
+  it('passes a comma-separated status string through and leaves out unset filters', async () => {
+    const spy = vi.fn(async () => new Response(JSON.stringify(page), { status: 200 }));
+    vi.stubGlobal('fetch', spy);
+
+    await new ProofAgeClient(baseConfig).verifications().list({ status: 'review,expired', cursor: 'abc' });
+
+    expect(fetchCall(spy)[0]).toBe('https://api.test.com/v1/verifications?cursor=abc&status=review%2Cexpired');
+  });
+
+  it('sends no query string without filters', async () => {
+    const spy = vi.fn(async () => new Response(JSON.stringify({ data: [], next_cursor: null }), { status: 200 }));
+    vi.stubGlobal('fetch', spy);
+
+    const result = await new ProofAgeClient(baseConfig).verifications().list();
+
+    expect(result).toEqual({ data: [], next_cursor: null });
+    const [url, init] = fetchCall(spy);
+    expect(url).toBe('https://api.test.com/v1/verifications');
+    const expected = createHmac('sha256', 'test-secret-key').update('GET/v1/verifications', 'utf8').digest('hex');
+    expect((init.headers as Record<string, string>)['X-HMAC-Signature']).toBe(expected);
+  });
+
+  it('retries a list on 5xx like any GET', async () => {
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Server Error' }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(page), { status: 200 }));
+    vi.stubGlobal('fetch', spy);
+
+    const result = await new ProofAgeClient({ ...baseConfig, retryAttempts: 2, retryDelay: 1 })
+      .verifications()
+      .list({ limit: 1 });
+
+    expect(result?.data).toHaveLength(1);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('setting a test outcome', () => {
+  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 3, retryDelay: 1 };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('posts the outcome and resolves to the verification', async () => {
+    const verification = {
+      id: 'ver_1',
+      external_id: null,
+      external_metadata: null,
+      redirect_url: null,
+      status: 'resubmission_requested',
+      reason: null,
+      duplicate_check: { checked: false, duplicate_count: 0, duplicates: [] },
+      erasure: null,
+      consent_accepted_at: null,
+      created_at: '2026-10-08T12:00:00+00:00',
+      updated_at: '2026-10-08T12:00:05+00:00',
+    };
+    const spy = vi.fn(async () => new Response(JSON.stringify(verification), { status: 200 }));
+    vi.stubGlobal('fetch', spy);
+
+    const result = await new ProofAgeClient(baseConfig)
+      .verifications('ver_1')
+      .setTestOutcome({ status: 'resubmission_requested', reason: 'Blurry photo' });
+
+    expect(result?.status).toBe('resubmission_requested');
+    const [url, init] = fetchCall(spy);
+    expect(url).toBe('https://api.test.com/v1/verifications/ver_1/test-outcome');
+    expect(init.method).toBe('POST');
+    const body = '{"status":"resubmission_requested","reason":"Blurry photo"}';
+    expect(init.body).toBe(body);
+    const expected = createHmac('sha256', 'test-secret-key')
+      .update(`POST/v1/verifications/ver_1/test-outcome${body}`, 'utf8')
+      .digest('hex');
+    expect((init.headers as Record<string, string>)['X-HMAC-Signature']).toBe(expected);
+  });
+
+  it('surfaces TEST_WORKSPACE_ONLY on a live workspace', async () => {
+    const body = { error: { code: 'TEST_WORKSPACE_ONLY', message: 'The outcome can only be set in a test workspace.' } };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status: 403 })));
+
+    const error = await new ProofAgeClient(baseConfig)
+      .verifications('ver_1')
+      .setTestOutcome({ status: 'approved' })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProofAgeError);
+    expect((error as ProofAgeError).statusCode).toBe(403);
+    expect((error as ProofAgeError).code).toBe('TEST_WORKSPACE_ONLY');
+  });
+
+  it('surfaces INVALID_STATUS as a ValidationError', async () => {
+    const body = { error: { code: 'INVALID_STATUS', message: 'The verification is already approved, a final status.' } };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status: 422 })));
+
+    const error = await new ProofAgeClient(baseConfig)
+      .verifications('ver_1')
+      .setTestOutcome({ status: 'declined' })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ValidationError);
+    expect((error as ValidationError).code).toBe('INVALID_STATUS');
+  });
+
+  it('does not retry on 5xx: the outcome may already be set', async () => {
+    const spy = vi.fn(async () => new Response(JSON.stringify({ message: 'Server Error' }), { status: 500 }));
+    vi.stubGlobal('fetch', spy);
+
+    await expect(
+      new ProofAgeClient(baseConfig).verifications('ver_1').setTestOutcome({ status: 'approved' }),
+    ).rejects.toThrow(ProofAgeError);
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it('requires a verification id', async () => {
+    await expect(new ProofAgeClient(baseConfig).verifications().setTestOutcome({ status: 'approved' })).rejects.toThrow(
+      'Verification ID is required',
+    );
+  });
+
+  it('takes only the outcomes the API accepts at the type level', () => {
+    // @ts-expect-error — expired is not an outcome a test can set
+    const bad: SetTestOutcomePayload = { status: 'expired' };
+    const ok: SetTestOutcomePayload = { status: 'review', reason: null };
+    expect([bad, ok]).toHaveLength(2);
   });
 });

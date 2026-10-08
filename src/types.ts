@@ -141,6 +141,53 @@ export interface BlockFacePayload {
   reason?: string;
 }
 
+/**
+ * Statuses `GET /v1/verifications` filters on. `documents_required` is not one: a verification
+ * waiting for a document is stored as `started` (and listed as `documents_required`).
+ */
+export const LIST_VERIFICATIONS_STATUSES = [
+  'created',
+  'started',
+  'submitted',
+  'resubmission_requested',
+  'approved',
+  'declined',
+  'abandoned',
+  'expired',
+  'review',
+] as const;
+
+export type ListVerificationsStatus = (typeof LIST_VERIFICATIONS_STATUSES)[number];
+
+/**
+ * GET /v1/verifications query. `status` takes one status, an array, or a comma-separated
+ * string; an array is sent comma-separated. Send the same filters with `cursor`.
+ */
+export interface ListVerificationsParams {
+  status?: ListVerificationsStatus | readonly ListVerificationsStatus[] | (string & {});
+  /** Exact, case-sensitive match (<= 255 characters). */
+  external_id?: string;
+  /** 1 to 100; the API defaults to 20. */
+  limit?: number;
+  /** The `next_cursor` of the previous page. */
+  cursor?: string;
+}
+
+/** The outcomes `setTestOutcome()` can set. */
+export const TEST_VERIFICATION_OUTCOMES = ['approved', 'declined', 'review', 'resubmission_requested'] as const;
+
+export type TestVerificationOutcome = (typeof TEST_VERIFICATION_OUTCOMES)[number];
+
+/** POST /v1/verifications/{id}/test-outcome body. Test workspaces only. */
+export interface SetTestOutcomePayload {
+  status: TestVerificationOutcome;
+  /**
+   * A note kept with a `resubmission_requested` outcome in the verification's history
+   * (<= 1000 characters). It is not the decision `reason` code.
+   */
+  reason?: string | null;
+}
+
 /* ----------------------------------------------------------------------------
  * Response shapes (snake_case, matching the API). These are the authoritative
  * response contract: the bundled openapi.json cannot describe most response
@@ -226,6 +273,14 @@ export interface Verification {
   consent_accepted_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** GET /v1/verifications: a page of verifications, newest first. */
+export interface VerificationList {
+  /** Each in the shape `GET /v1/verifications/{id}` returns. */
+  data: Verification[];
+  /** Pass as `cursor` for the next page; null on the last page. */
+  next_cursor: string | null;
 }
 
 /** POST /v1/verifications (201) also returns the hosted session `url`. */

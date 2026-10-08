@@ -22,7 +22,7 @@ export {
 export type { QueryValue } from './hmac.js';
 export { generateWebhookSignature, handleWebhook, verifyWebhookSignature, webhookHandler } from './webhook.js';
 export type { HandleWebhookOptions, HandleWebhookResult, VerifyWebhookSignatureInput } from './webhook.js';
-export { BLOCK_FACE_REASON_CODES } from './types.js';
+export { BLOCK_FACE_REASON_CODES, LIST_VERIFICATIONS_STATUSES, TEST_VERIFICATION_OUTCOMES } from './types.js';
 export { SDK_VERSION } from './version.js';
 export { VerificationResource } from './resources/verifications.js';
 export { WorkspaceResource } from './resources/workspace.js';
@@ -45,12 +45,17 @@ export type {
   DocumentType,
   DuplicateCheck,
   Erasure,
+  ListVerificationsParams,
+  ListVerificationsStatus,
   ManualModeration,
   MediaUploadType,
   ProofAgeConfig,
+  SetTestOutcomePayload,
+  TestVerificationOutcome,
   UploadMediaPayload,
   Verification,
   VerificationDocument,
+  VerificationList,
   VerificationStatus,
   WebhookEvent,
   WebhookPayload,

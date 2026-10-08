@@ -1,5 +1,9 @@
 import { readFileSync } from 'node:fs';
-import { BLOCK_FACE_REASON_CODES } from '../src/types.js';
+import {
+  BLOCK_FACE_REASON_CODES,
+  LIST_VERIFICATIONS_STATUSES,
+  TEST_VERIFICATION_OUTCOMES,
+} from '../src/types.js';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { ConsentInfo } from '../src/types.js';
 
@@ -7,6 +11,8 @@ interface OperationContract {
   method: string;
   path: string;
   request: string[];
+  /** Query parameters, for the operations that take them. */
+  query?: string[];
   /** Top-level response fields; empty when the SDK resolves the call to null or a stream. */
   response: string[];
   /**
@@ -68,6 +74,13 @@ const OPERATIONS: Record<string, OperationContract> = {
       'url',
     ],
   },
+  'verifications.list': {
+    method: 'GET',
+    path: '/verifications',
+    request: [],
+    query: ['status', 'external_id', 'limit', 'cursor'],
+    response: ['data', 'next_cursor'],
+  },
   'verifications.find': {
     method: 'GET',
     path: '/verifications/{verification}',
@@ -122,6 +135,24 @@ const OPERATIONS: Record<string, OperationContract> = {
     request: [],
     response: ['verification_id', 'attempt_id', 'age_threshold', 'gender'],
   },
+  'verifications.setTestOutcome': {
+    method: 'POST',
+    path: '/verifications/{verification}/test-outcome',
+    request: ['status', 'reason'],
+    response: [
+      'id',
+      'external_id',
+      'external_metadata',
+      'redirect_url',
+      'status',
+      'reason',
+      'consent_accepted_at',
+      'created_at',
+      'updated_at',
+      'duplicate_check',
+      'erasure',
+    ],
+  },
   'verifications.blockFace': {
     method: 'POST',
     path: '/verifications/{verification}/blocked-face',
@@ -169,7 +200,7 @@ function requestProperties(path: string, method: string): string[] {
   return schemaProperties(content['application/json']?.schema ?? content['multipart/form-data']?.schema ?? {});
 }
 
-function responseProperties(path: string, method: string, status?: string): string[] {
+function responseSchema(path: string, method: string, status?: string): Json {
   const op = spec.paths[path]?.[method.toLowerCase()];
   const responses: Record<string, Json> = op?.responses ?? {};
   for (const [code, resp] of Object.entries(responses)) {
@@ -180,9 +211,23 @@ function responseProperties(path: string, method: string, status?: string): stri
     if (!schema) {
       continue;
     }
-    return schemaProperties(schema);
+    return schema;
   }
-  return [];
+  return undefined;
+}
+
+function responseProperties(path: string, method: string, status?: string): string[] {
+  return schemaProperties(responseSchema(path, method, status));
+}
+
+/** Field names of the items of a list response's `data` array. */
+function dataItemProperties(path: string, method: string): string[] {
+  return schemaProperties(responseSchema(path, method)?.properties?.data?.items);
+}
+
+function queryParameters(path: string, method: string): string[] {
+  const params: Json[] = spec.paths[path]?.[method.toLowerCase()]?.parameters ?? [];
+  return params.filter((p) => p.in === 'query').map((p) => String(p.name));
 }
 
 const sorted = (xs: string[]): string[] => [...xs].sort();
@@ -214,6 +259,18 @@ describe('API contract drift', () => {
     }
   });
 
+  it('query parameters match the spec', () => {
+    for (const [name, op] of Object.entries(OPERATIONS)) {
+      expect(sorted(queryParameters(op.path, op.method)), `query parameters for [${name}]`).toEqual(
+        sorted(op.query ?? []),
+      );
+    }
+  });
+
+  it('a listed verification has the shape find() returns', () => {
+    expect(sorted(dataItemProperties('/verifications', 'GET'))).toEqual(sorted(OPERATIONS['verifications.find']!.response));
+  });
+
   it('response fields match the spec for describable endpoints', () => {
     const checked: string[] = [];
     for (const [name, op] of Object.entries(OPERATIONS)) {
@@ -232,6 +289,8 @@ describe('API contract drift', () => {
       'verifications.document',
       'verifications.estimation',
       'verifications.find',
+      'verifications.list',
+      'verifications.setTestOutcome',
       'workspace.get',
       'workspace.getConsent',
     ]);
@@ -261,6 +320,21 @@ describe('API contract drift', () => {
     // silently rejects it at the type level.
     expect(BLOCK_FACE_REASON_CODES).toEqual(
       (spec.components as { schemas: Record<string, { enum: string[] }> }).schemas.BlockedFaceReasonCode.enum,
+    );
+  });
+
+  it('the statuses list() filters on are the ones the API accepts', () => {
+    // The parameter's description names every accepted status, plus documents_required, which
+    // is listed but not stored, so it is not a filter value.
+    const param = spec.paths['/verifications']?.get?.parameters?.find((p: Json) => p.name === 'status');
+    const named = new Set([...String(param?.description).matchAll(/`([a-z_]+)`/g)].map((m) => m[1]));
+    named.delete('documents_required');
+    expect(sorted([...named] as string[])).toEqual(sorted([...LIST_VERIFICATIONS_STATUSES]));
+  });
+
+  it('the outcomes setTestOutcome() offers are the ones the API accepts', () => {
+    expect(TEST_VERIFICATION_OUTCOMES).toEqual(
+      spec.components?.schemas?.SetTestVerificationOutcomeRequest?.properties?.status?.enum,
     );
   });
 
