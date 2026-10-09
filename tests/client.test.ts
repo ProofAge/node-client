@@ -407,12 +407,12 @@ describe('base URL', () => {
   const keys = { apiKey: 'pk', secretKey: 'sk' };
 
   it('defaults to the API origin', () => {
-    expect(new ProofAgeClient(keys).getConfig().baseUrl).toBe('https://api.proofage.xyz');
+    expect(new ProofAgeClient(keys).getConfig().baseUrl).toBe('https://api.proofage.net');
   });
 
   it('strips a trailing /v1 copied from the OpenAPI servers entry', () => {
-    expect(new ProofAgeClient({ ...keys, baseUrl: 'https://api.proofage.xyz/v1/' }).getConfig().baseUrl).toBe(
-      'https://api.proofage.xyz',
+    expect(new ProofAgeClient({ ...keys, baseUrl: 'https://api.proofage.net/v1/' }).getConfig().baseUrl).toBe(
+      'https://api.proofage.net',
     );
   });
 
@@ -423,7 +423,7 @@ describe('base URL', () => {
   });
 
   it('rejects something that is not a URL', () => {
-    expect(() => new ProofAgeClient({ ...keys, baseUrl: 'api.proofage.xyz' })).toThrow(/Invalid baseUrl/);
+    expect(() => new ProofAgeClient({ ...keys, baseUrl: 'api.proofage.net' })).toThrow(/Invalid baseUrl/);
   });
 });
 

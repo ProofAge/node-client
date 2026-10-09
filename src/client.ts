@@ -13,7 +13,7 @@ import { buildSdkHeader, resolveUserAgent, SDK_HEADER } from './sdk-identificati
 import { WorkspaceResource } from './resources/workspace.js';
 import type { ApiErrorData, ProofAgeConfig } from './types.js';
 
-const DEFAULT_BASE_URL = 'https://api.proofage.xyz';
+const DEFAULT_BASE_URL = 'https://api.proofage.net';
 const DEFAULT_VERSION = 'v1';
 
 /** Methods that are safe to repeat after an ambiguous failure (5xx, timeout, dropped connection). */
@@ -72,7 +72,7 @@ function retryAfterMs(header: string | null): number | undefined {
 
 /**
  * Normalize the base URL to the API origin (plus any proxy path prefix), without the version.
- * A trailing `/{version}` — e.g. `https://api.proofage.xyz/v1` copied from the OpenAPI
+ * A trailing `/{version}` — e.g. `https://api.proofage.net/v1` copied from the OpenAPI
  * `servers` entry — is stripped, because the client appends the version itself.
  */
 function normalizeBaseUrl(raw: string, version: string): string {
@@ -81,7 +81,7 @@ function normalizeBaseUrl(raw: string, version: string): string {
     url = new URL(raw);
   } catch {
     throw new ProofAgeError(
-      `Invalid baseUrl "${raw}": expected the API origin, e.g. https://api.proofage.xyz (without /${version})`,
+      `Invalid baseUrl "${raw}": expected the API origin, e.g. https://api.proofage.net (without /${version})`,
       0,
     );
   }
@@ -405,7 +405,7 @@ export class ProofAgeClient {
               throw new ProofAgeError(
                 `Expected a JSON response from ${url} but got HTTP ${status} with a non-JSON body ` +
                   `(Content-Type: ${contentType}). Check that baseUrl is the API origin, ` +
-                  `e.g. https://api.proofage.xyz`,
+                  `e.g. https://api.proofage.net`,
                 status,
                 { responseBody: rawText, cause },
               );

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /*
  * Copies the published OpenAPI spec into this package's bundled openapi.json.
- * Source defaults to https://docs.proofage.xyz/openapi.json. PROOFAGE_OPENAPI_SRC overrides
+ * Source defaults to https://docs.proofage.net/openapi.json. PROOFAGE_OPENAPI_SRC overrides
  * it with another URL or a local file, for example the docs repo's openapi.json before it
  * is published (the docs repo regenerates it from the app with scripts/sync_openapi.py).
  */
@@ -10,7 +10,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const src = process.env.PROOFAGE_OPENAPI_SRC ?? 'https://docs.proofage.xyz/openapi.json';
+const src = process.env.PROOFAGE_OPENAPI_SRC ?? 'https://docs.proofage.net/openapi.json';
 const dest = resolve(here, '../openapi.json');
 
 let body;

@@ -22,7 +22,7 @@ drifts from `package.json`.
 ## Changing the API surface
 
 The API change checklist for every client lives in `.ai/guidelines/api-changes.md` in the app repo (`ProofAge/web-app`). In short — `npm run sync-spec`
-(reads `https://docs.proofage.xyz/openapi.json`; set `PROOFAGE_OPENAPI_SRC` to the docs checkout's
+(reads `https://docs.proofage.net/openapi.json`; set `PROOFAGE_OPENAPI_SRC` to the docs checkout's
 `openapi.json` to take a spec that is not published yet), then make
 `tests/api-contract.test.ts` pass by updating `OPERATIONS`, `src/types.ts` and `AGENTS.md`
 together. `AGENTS.md` ships to consumers and is the authoritative response contract; this file

@@ -6,7 +6,7 @@ export interface ProofAgeConfig {
   apiKey?: string;
   secretKey?: string;
   /**
-   * The API origin, without the version path: `https://api.proofage.xyz` (the default).
+   * The API origin, without the version path: `https://api.proofage.net` (the default).
    * The client appends `/{version}` itself; a trailing `/v1` is stripped so a URL copied
    * from the OpenAPI `servers` entry still works.
    */

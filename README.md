@@ -28,7 +28,7 @@ Set your environment variables:
 PROOFAGE_API_KEY=pk_live_...
 PROOFAGE_SECRET_KEY=sk_live_...
 # Optional:
-# PROOFAGE_BASE_URL=https://api.proofage.xyz
+# PROOFAGE_BASE_URL=https://api.proofage.net
 # PROOFAGE_WEBHOOK_TOLERANCE=300
 ```
 
@@ -64,13 +64,15 @@ All options fall back to environment variables, then to defaults.
 |--------|---------|---------|-------------|
 | `apiKey` | `PROOFAGE_API_KEY` | — | Workspace API key |
 | `secretKey` | `PROOFAGE_SECRET_KEY` | — | Secret key for HMAC signing |
-| `baseUrl` | `PROOFAGE_BASE_URL` | `https://api.proofage.xyz` | API **origin, without `/v1`** — the client appends the version. A trailing `/v1` is stripped. |
+| `baseUrl` | `PROOFAGE_BASE_URL` | `https://api.proofage.net` | API **origin, without `/v1`** — the client appends the version. A trailing `/v1` is stripped. |
 | `version` | `PROOFAGE_VERSION` | `v1` | API version path segment |
 | `timeout` | `PROOFAGE_TIMEOUT` | `30000` | Request timeout (ms) |
 | `retryAttempts` | `PROOFAGE_RETRY_ATTEMPTS` | `3` | Total attempts for transient failures (see below) |
 | `retryDelay` | `PROOFAGE_RETRY_DELAY` | `1000` | Base delay between retries (ms), multiplied by the attempt number |
 | `sdkTokens` | — | `[]` | For wrapper packages: `<name>/<version>` tokens prepended to `X-ProofAge-Sdk` (see below) |
 | `userAgent` | — | `ProofAge-Node/<version> (Node <runtime>)` | Overrides the `User-Agent` header |
+
+The default moved from `https://api.proofage.xyz` to `https://api.proofage.net` in 0.14.0. The old host still answers identically (same keys, same signatures), so a `baseUrl` pinned to it keeps working.
 
 **Retries.** GET requests retry on 408, 429, 5xx, timeouts and network errors. POST and DELETE
 requests (create, consent, upload, submit, block, test outcome, webhook subscriptions) retry **only** on 429 and on network errors raised

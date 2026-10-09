@@ -16,10 +16,12 @@ first, space-separated; the `node/<version>` token is always last) and `User-Age
 ProofAge-Node/<package version> (Node <runtime version>)` unless `userAgent` is set. Neither
 header is signed.
 
-`baseUrl` is the API **origin without the version**: `https://api.proofage.xyz` (the default).
+`baseUrl` is the API **origin without the version**: `https://api.proofage.net` (the default).
 The client appends `/{version}` (default `v1`) itself, so requests go to
-`https://api.proofage.xyz/v1/...`. A trailing `/v1` on `baseUrl` (as in the OpenAPI `servers`
+`https://api.proofage.net/v1/...`. A trailing `/v1` on `baseUrl` (as in the OpenAPI `servers`
 entry) is stripped; a value that is not an absolute http(s) URL throws at construction.
+The former host `https://api.proofage.xyz` still answers identically (same keys, same
+signatures), so a `baseUrl` pinned to it keeps working.
 
 ## Errors
 
