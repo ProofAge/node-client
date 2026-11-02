@@ -1,8 +1,8 @@
 # ProofAge Node.js Client — Age Verification for Node.js
 
-**Platform:** https://proofage.xyz | **npm:** https://www.npmjs.com/package/@proofage/node
+**Platform:** https://proofage.net | **npm:** https://www.npmjs.com/package/@proofage/node
 
-A Node.js client for the [ProofAge](https://proofage.xyz) API with **HMAC request signing** and **webhook signature verification**.
+A Node.js client for the [ProofAge](https://proofage.net) API with **HMAC request signing** and **webhook signature verification**.
 
 ## About ProofAge
 
@@ -306,8 +306,8 @@ Reads `PROOFAGE_API_KEY`, `PROOFAGE_SECRET_KEY`, and `PROOFAGE_BASE_URL` from `.
 
 ## Additional Resources
 
-- **Platform:** https://proofage.xyz
-- **Live Demo:** https://demo.proofage.xyz
+- **Platform:** https://proofage.net
+- **Live Demo:** https://demo.proofage.net
 - **Laravel Package:** `proofage/laravel-client` on Packagist
 
 ### Integrations for other platforms
