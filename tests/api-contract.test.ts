@@ -378,14 +378,10 @@ describe('API contract drift', () => {
     );
   });
 
-  it('the reason codes erasePersonalData() takes are the ones the API names', () => {
-    // The rule is not an enum in the spec, so its description names the accepted codes.
-    const description = String(
-      spec.components?.schemas?.ErasePersonalDataRequest?.properties?.reason_code?.description,
-    );
-    const named = new Set([...description.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]) as string[]);
-    named.delete('reason');
-    expect(sorted([...named])).toEqual(sorted([...ERASURE_REASON_CODES]));
+  it('the reason codes erasePersonalData() takes are the ones the API accepts', () => {
+    const reasonCode = spec.components?.schemas?.ErasePersonalDataRequest?.properties?.reason_code;
+    const name = String(reasonCode?.$ref).replace('#/components/schemas/', '');
+    expect(ERASURE_REASON_CODES).toEqual(spec.components?.schemas?.[name]?.enum);
   });
 
   it('the statuses list() filters on are the ones the API accepts', () => {

@@ -1788,6 +1788,44 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "The storage deletes failed and the erasure was rolled back: nothing was erased (`ERASURE_FAILED`). Safe to retry after the number of seconds in the `Retry-After` response header, 3.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "examples": [
+                    {
+                      "error": {
+                        "code": "ERASURE_FAILED",
+                        "message": "The erasure could not be completed and nothing was erased. It is safe to retry."
+                      }
+                    }
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -2500,8 +2538,8 @@
         "type": "object",
         "properties": {
           "reason_code": {
-            "type": "string",
-            "description": "Why the erasure is asked for: `data_subject_request`, `customer_request`, `retention_policy`, `test_data` or `other`. `other` needs a `reason`."
+            "description": "Why the erasure is asked for: `data_subject_request`, `customer_request`, `retention_policy`, `test_data` or `other`. `other` needs a `reason`.",
+            "$ref": "#/components/schemas/ErasureReasonCode"
           },
           "reason": {
             "type": [
@@ -2516,6 +2554,18 @@
           "reason_code"
         ],
         "title": "ErasePersonalDataRequest"
+      },
+      "ErasureReasonCode": {
+        "type": "string",
+        "description": "Why an erasure is asked for: `data_subject_request` (the verified person asked), `customer_request` (the customer's own initiative), `retention_policy` (a retention window elapsed), `test_data` (a test or synthetic session) or `other`, which needs a comment.\n",
+        "enum": [
+          "data_subject_request",
+          "customer_request",
+          "retention_policy",
+          "test_data",
+          "other"
+        ],
+        "title": "ErasureReasonCode"
       },
       "SetTestVerificationOutcomeRequest": {
         "type": "object",
