@@ -2557,7 +2557,7 @@
       },
       "ErasureReasonCode": {
         "type": "string",
-        "description": "Why an erasure is asked for: `data_subject_request` (the verified person asked), `customer_request` (the customer's own initiative), `retention_policy` (a retention window elapsed), `test_data` (a test or synthetic session) or `other`, which needs a comment.\n",
+        "description": "Why an erasure is asked for: `data_subject_request` (the verified person asked), `customer_request` (the customer's own initiative), `retention_policy` (a retention window elapsed), `test_data` (a test or synthetic session) or `other`, which needs a `reason`.\n",
         "enum": [
           "data_subject_request",
           "customer_request",
