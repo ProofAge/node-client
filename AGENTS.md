@@ -30,7 +30,7 @@ Every non-2xx response throws. `AuthenticationError` (401) and `ValidationError`
 `code` (the API's machine-readable code, when sent), `errorData` and the raw `responseBody`.
 The API uses four error body shapes; the client reads all of them:
 
-- `{ error: { code, message } }` — most errors (401 auth, 429 `RATE_LIMIT`, submit 422, media download 404, `403 TEST_WORKSPACE_ONLY` and `422 INVALID_STATUS` on a test outcome, `422 WEBHOOK_SUBSCRIPTION_LIMIT`). `errorData` is the inner object.
+- `{ error: { code, message } }` — most errors (401 auth, 429 `RATE_LIMIT`, submit 422, media download 404, `403 TEST_WORKSPACE_ONLY` and `422 INVALID_STATUS` on a test outcome, `422 WEBHOOK_SUBSCRIPTION_LIMIT`, and on an erasure `422 VERIFICATION_NOT_FINAL`, `403 VERIFICATION_MISMATCH` and `409 VERIFICATION_PROCESSING` / `ERASURE_IN_PROGRESS`). `errorData` is the inner object.
 - `{ code, message, ...extra }` — flat: `402 PAYMENT_METHOD_REQUIRED` (extra: `free_verifications_remaining`, `trial_ends_at`, `trial_active`) and media-quality rejections on upload (`422`, e.g. `FACE_NOT_FOUND`; `500 VALIDATION_SERVICE_UNAVAILABLE`). `errorData` is the whole body.
 - `{ message, errors }` — request validation (`422`). `code` is undefined; `getErrors()` has the fields.
 - `{ message }` — `403` (verification not in your workspace) and `404` (`Resource not found`, e.g. an unknown webhook subscription).
@@ -41,7 +41,7 @@ throws `ProofAgeError` (almost always a `baseUrl` pointing at a website rather t
 Retries: GETs retry on 408, 429, 5xx, timeouts and network errors. POSTs and DELETEs retry
 **only** on 429 and on network errors raised before the request was sent (DNS failure,
 connection refused) — never on 5xx or timeouts, where the server may already have created the
-verification, stored the upload, set the test outcome or created/deleted the subscription. A 429 waits for `Retry-After` when present, else `retryDelay × attempt`.
+verification, stored the upload, set the test outcome, erased the verification or created/deleted the subscription. A 429 waits for `Retry-After` when present, else `retryDelay × attempt`.
 
 ## Auth / HMAC
 
@@ -127,6 +127,12 @@ Response: `{ verification_id: string, attempt_id: string|null, age_threshold: { 
 Request: `{ reason_code?: BlockFaceReasonCode, reason?: string(<=1000) }`.
 Response: `204 No Content` (method resolves to `null`).
 
+### DELETE /verifications/{verification}/personal-data — `client.verifications(id).erasePersonalData({ reason_code, reason })` → `Verification`
+Irreversibly erases the verification's personal data: images, recordings, document fields, analysis results and device data. The status, reason, dates, audit trail and the fact of the erasure stay. No webhook is sent. Afterwards `GET /verifications/{id}` carries `erasure: { erased_at, scope: "personal_data", reason, requested_via: "customer" }`, `document()` returns `null` fields and every media item with `url: null`, and the media download answers 404.
+Request (`ErasePersonalDataPayload`): `{ reason_code: ErasureReasonCode (ERASURE_REASON_CODES), reason?: string(<=1000) }`. `reason` is required when `reason_code` is `other`.
+Response: the verification, same shape as `GET /verifications/{verification}`. A repeat call on an erased verification answers `200` with it again and changes nothing.
+Only `approved`, `declined`, `abandoned` and `expired` verifications can be erased. Errors: `422 { error: { code: "VERIFICATION_NOT_FINAL", message } }` for any other status (`ValidationError`); `422 { error: { code: "VALIDATION_ERROR", message }, errors }` for a missing or unknown `reason_code` or `other` without a `reason`; `403 { error: { code: "VERIFICATION_MISMATCH", message } }` for another workspace's verification; `409 { error: { code: "VERIFICATION_PROCESSING" | "ERASURE_IN_PROGRESS", message } }` with `Retry-After: 3` (`ProofAgeError`, `statusCode` 409): the decision was made a moment ago and the pipeline is finishing, or another erasure of it is running; the SDK does not retry it, call again after about 3 seconds. Limited to 60 calls a minute per workspace (a 429 is retried).
+
 ### POST /verifications/{verification}/test-outcome — `client.verifications(id).setTestOutcome({ status, reason })` → `Verification`
 **Test workspaces only.** Finishes the verification with `status` without a person going through the widget, so an integration's handling of each outcome can be tested end to end. A verification nobody has opened is moved through `started` and `submitted` first, so the outcome is the only decision webhooks are sent for. Works from `created`, `started`, `submitted`, `review` and `resubmission_requested`.
 Request (`SetTestOutcomePayload`): `{ status: "approved"|"declined"|"review"|"resubmission_requested" (TEST_VERIFICATION_OUTCOMES), reason?: string(<=1000)|null }`. `reason` is a note kept with a `resubmission_requested` outcome in the verification's history, not the decision `reason` code.
@@ -154,6 +160,7 @@ Response: `204 No Content` (method resolves to `null`). Error: `404 { message: "
 - `status` on `setTestOutcome()` (`TestVerificationOutcome`, `TEST_VERIFICATION_OUTCOMES`): `approved`, `declined`, `review`, `resubmission_requested`.
 - `statuses` on a webhook subscription (`WebhookSubscriptionStatus`, `WEBHOOK_SUBSCRIPTION_STATUSES`): `approved`, `declined`, `resubmission_requested`, `abandoned`, `expired`, `review`.
 - `status` (`VerificationStatus`): one of `created`, `started`, `submitted`, `resubmission_requested`, `approved`, `declined`, `abandoned`, `expired`, `review`, or `documents_required` (the last is surfaced from the latest attempt's state, not a verification status). The type is an open union: handle unknown values.
+- `reason_code` (request field on `erasePersonalData`, the `ErasureReasonCode` union / `ERASURE_REASON_CODES` array): `data_subject_request` (the verified person asked for their data to be erased), `customer_request` (you are erasing it on your own initiative), `retention_policy` (your retention window elapsed), `test_data` (a test or synthetic session), `other` (explain in `reason`, which is then required).
 - `reason_code` (request field on `blockFace`, the `BlockFaceReasonCode` union / `BLOCK_FACE_REASON_CODES` array): `presentation_attack` (spoof: screen, print or mask), `fraudulent_document` (forged, edited, or not a real document), `scam_or_abuse` (identity may be genuine — blocked for behaviour on your platform), `underage`, `other` (explain in `reason`). Optional over the API, mandatory in the ProofAge consoles: send it whenever a person made the decision, or the block cannot be told apart from an automated one in reporting.
 - `reason` (on `declined` / `resubmission_requested`): dotted codes from the server's reason catalog — illustrative examples: `aml.blocklist.face_match`, `document.face.mismatch`, `verification.age_threshold.failed`. Treat `reason` as an open string.
 

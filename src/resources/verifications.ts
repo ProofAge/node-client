@@ -6,6 +6,7 @@ import type {
   BlockFacePayload,
   CreatedVerification,
   CreateVerificationPayload,
+  ErasePersonalDataPayload,
   ListVerificationsParams,
   SetTestOutcomePayload,
   UploadMediaPayload,
@@ -177,6 +178,34 @@ export class VerificationResource {
     const res = await this.client.makeRequest(
       'POST',
       `verifications/${this.verificationId}/test-outcome`,
+      data as unknown as Record<string, unknown>,
+    );
+    return (await res.json()) as Verification | null;
+  }
+
+  /**
+   * Irreversibly erase the verification's personal data: images, recordings, document fields,
+   * analysis results and device data. The status, reason, dates and the fact of the erasure stay;
+   * the returned verification carries an `erasure` block, and `document()` then reads `null` fields
+   * and media without a `url`. No webhook is sent. Resolves to the verification, as `get()` does.
+   *
+   * Only `approved`, `declined`, `abandoned` and `expired` verifications can be erased: any other
+   * status throws a `ValidationError` with `code` `VERIFICATION_NOT_FINAL` (422), and a missing or
+   * unknown `reason_code`, or `other` without a `reason`, throws one with `VALIDATION_ERROR`.
+   * Calling it again on an erased verification resolves to the verification again.
+   *
+   * A `ProofAgeError` with `statusCode` 409 means try again in about 3 seconds:
+   * `VERIFICATION_PROCESSING` (the decision was made a moment ago and the pipeline is finishing) or
+   * `ERASURE_IN_PROGRESS` (another erasure of it is running). The SDK does not retry it. 60 calls a
+   * minute per workspace; a 429 is retried.
+   */
+  async erasePersonalData(data: ErasePersonalDataPayload): Promise<Verification | null> {
+    if (!this.verificationId) {
+      throw new TypeError('Verification ID is required');
+    }
+    const res = await this.client.makeRequest(
+      'DELETE',
+      `verifications/${this.verificationId}/personal-data`,
       data as unknown as Record<string, unknown>,
     );
     return (await res.json()) as Verification | null;

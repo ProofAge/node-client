@@ -142,6 +142,34 @@ export interface BlockFacePayload {
 }
 
 /**
+ * Why `erasePersonalData()` is asked for.
+ *
+ * - `data_subject_request` — the verified person exercised their right to erasure
+ * - `customer_request` — you are erasing it on your own initiative, not the person's
+ * - `retention_policy` — your retention window elapsed
+ * - `test_data` — the session was a test or a synthetic run, not a real person
+ * - `other` — anything else; explain it in `reason`, which `other` requires
+ */
+export const ERASURE_REASON_CODES = [
+  'data_subject_request',
+  'customer_request',
+  'retention_policy',
+  'test_data',
+  'other',
+] as const;
+
+export type ErasureReasonCode = (typeof ERASURE_REASON_CODES)[number];
+
+/**
+ * DELETE /v1/verifications/{id}/personal-data body.
+ */
+export interface ErasePersonalDataPayload {
+  reason_code: ErasureReasonCode;
+  /** Free-text detail, at most 1000 characters; required when `reason_code` is `other`. */
+  reason?: string;
+}
+
+/**
  * Statuses `GET /v1/verifications` filters on. `documents_required` is not one: a verification
  * waiting for a document is stored as `started` (and listed as `documents_required`).
  */

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import {
   BLOCK_FACE_REASON_CODES,
+  ERASURE_REASON_CODES,
   LIST_VERIFICATIONS_STATUSES,
   TEST_VERIFICATION_OUTCOMES,
   WEBHOOK_SUBSCRIPTION_STATUSES,
@@ -160,6 +161,24 @@ const OPERATIONS: Record<string, OperationContract> = {
     request: ['reason', 'reason_code'],
     response: [],
   },
+  'verifications.erasePersonalData': {
+    method: 'DELETE',
+    path: '/verifications/{verification}/personal-data',
+    request: ['reason', 'reason_code'],
+    response: [
+      'id',
+      'external_id',
+      'external_metadata',
+      'redirect_url',
+      'status',
+      'reason',
+      'consent_accepted_at',
+      'created_at',
+      'updated_at',
+      'duplicate_check',
+      'erasure',
+    ],
+  },
   'webhookSubscriptions.create': {
     method: 'POST',
     path: '/webhook-subscriptions',
@@ -313,6 +332,7 @@ describe('API contract drift', () => {
       'verifications.acceptConsent',
       'verifications.create',
       'verifications.document',
+      'verifications.erasePersonalData',
       'verifications.estimation',
       'verifications.find',
       'verifications.list',
@@ -356,6 +376,16 @@ describe('API contract drift', () => {
     expect(BLOCK_FACE_REASON_CODES).toEqual(
       (spec.components as { schemas: Record<string, { enum: string[] }> }).schemas.BlockedFaceReasonCode.enum,
     );
+  });
+
+  it('the reason codes erasePersonalData() takes are the ones the API names', () => {
+    // The rule is not an enum in the spec, so its description names the accepted codes.
+    const description = String(
+      spec.components?.schemas?.ErasePersonalDataRequest?.properties?.reason_code?.description,
+    );
+    const named = new Set([...description.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]) as string[]);
+    named.delete('reason');
+    expect(sorted([...named])).toEqual(sorted([...ERASURE_REASON_CODES]));
   });
 
   it('the statuses list() filters on are the ones the API accepts', () => {

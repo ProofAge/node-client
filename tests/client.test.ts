@@ -118,6 +118,66 @@ describe('ProofAgeClient', () => {
     expect(headers['X-HMAC-Signature']).toBeDefined();
   });
 
+  it('erases personal data with a signed DELETE that carries the reason', async () => {
+    const spy = vi.fn(async () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: 'ver_123',
+            status: 'approved',
+            erasure: {
+              erased_at: '2026-11-06T12:00:00+00:00',
+              scope: 'personal_data',
+              reason: 'customer_request',
+              requested_via: 'customer',
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', spy);
+
+    const client = new ProofAgeClient(baseConfig);
+    const verification = await client
+      .verifications('ver_123')
+      .erasePersonalData({ reason_code: 'customer_request', reason: 'one-time public demo session' });
+
+    expect(verification?.erasure?.requested_via).toBe('customer');
+    expect(spy).toHaveBeenCalledOnce();
+    const [url, init] = fetchCall(spy);
+    const headers = init.headers as Record<string, string>;
+    expect(url).toBe('https://api.test.com/v1/verifications/ver_123/personal-data');
+    expect(init.method).toBe('DELETE');
+    expect(JSON.parse(String(init.body))).toEqual({
+      reason_code: 'customer_request',
+      reason: 'one-time public demo session',
+    });
+    expect(headers['Content-Type']).toBe('application/json');
+    expect(headers['X-HMAC-Signature']).toBeDefined();
+  });
+
+  it('does not retry an erasure the API answers with a 409', async () => {
+    const spy = vi.fn(async () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ error: { code: 'VERIFICATION_PROCESSING', message: 'Retry shortly.' } }),
+          { status: 409, headers: { 'Retry-After': '3' } },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', spy);
+
+    const client = new ProofAgeClient(baseConfig);
+    const error = await client
+      .verifications('ver_123')
+      .erasePersonalData({ reason_code: 'test_data' })
+      .catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ statusCode: 409, code: 'VERIFICATION_PROCESSING' });
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
   it('gets verification document result', async () => {
     const spy = vi.fn(async () =>
       Promise.resolve(
@@ -255,6 +315,15 @@ describe('ProofAgeClient', () => {
 
     await expect(client.verifications().blockFace()).rejects.toThrow(TypeError);
     await expect(client.verifications().blockFace()).rejects.toThrow('Verification ID is required');
+  });
+
+  it('throws when erasing personal data without id', async () => {
+    const client = new ProofAgeClient(baseConfig);
+
+    await expect(client.verifications().erasePersonalData({ reason_code: 'test_data' })).rejects.toThrow(TypeError);
+    await expect(client.verifications().erasePersonalData({ reason_code: 'test_data' })).rejects.toThrow(
+      'Verification ID is required',
+    );
   });
 
   it('sends X-API-Key and X-HMAC-Signature headers', async () => {

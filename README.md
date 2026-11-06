@@ -75,7 +75,7 @@ All options fall back to environment variables, then to defaults.
 The default moved from `https://api.proofage.xyz` to `https://api.proofage.net` in 0.14.0. The old host still answers identically (same keys, same signatures), so a `baseUrl` pinned to it keeps working.
 
 **Retries.** GET requests retry on 408, 429, 5xx, timeouts and network errors. POST and DELETE
-requests (create, consent, upload, submit, block, test outcome, webhook subscriptions) retry **only** on 429 and on network errors raised
+requests (create, consent, upload, submit, block, erase, test outcome, webhook subscriptions) retry **only** on 429 and on network errors raised
 before the request was sent (DNS failure, connection refused) — never on a 5xx or a timeout,
 where the server may already have acted, so a retry could create a second verification. A 429
 waits for the API's `Retry-After`. Media downloads never retry an HTTP status.
@@ -106,6 +106,7 @@ const client = new ProofAgeClient({ sdkTokens: ['shopify-app/1.4.0'] });
 - `client.verifications(id).downloadMediaTo(mediaId, path)` — same, streamed to a file; resolves to the path
 - `client.verifications(id).estimation()` — `GET /v1/verifications/{id}/estimation`
 - `client.verifications(id).blockFace({ reason_code, reason })` — `POST /v1/verifications/{id}/blocked-face`
+- `client.verifications(id).erasePersonalData({ reason_code, reason })` — `DELETE /v1/verifications/{id}/personal-data` (resolves to the verification; final statuses only)
 - `client.verifications(id).setTestOutcome({ status, reason })` — `POST /v1/verifications/{id}/test-outcome` (test workspaces only)
 - `client.webhookSubscriptions().create(body)` — `POST /v1/webhook-subscriptions`
 - `client.webhookSubscriptions().list()` — `GET /v1/webhook-subscriptions`
@@ -217,6 +218,21 @@ await client.verifications(id).blockFace({
 ```
 
 Send `reason_code` whenever a person made the decision; blocklist reporting counts it.
+
+### Erasing personal data
+
+```typescript
+const verification = await client.verifications(id).erasePersonalData({
+  reason_code: 'customer_request', // see ERASURE_REASON_CODES
+  reason: 'one-time public demo session',
+});
+console.log(verification?.erasure); // { erased_at, scope: 'personal_data', reason, requested_via: 'customer' }
+```
+
+Removes the images, recordings, document fields, analysis results and device data of an `approved`,
+`declined`, `abandoned` or `expired` verification. The status, dates and the fact of the erasure stay,
+and no webhook is sent. A repeat call answers with the verification again. A `409` (`statusCode`)
+means the pipeline is still finishing or another erasure is running: retry in about 3 seconds.
 
 Every method is fully typed (see `src/types.ts` / the package's type definitions), and the exact request/response shape of each endpoint is documented in `AGENTS.md` and the bundled `openapi.json`.
 

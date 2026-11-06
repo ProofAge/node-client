@@ -24,6 +24,7 @@ export { generateWebhookSignature, handleWebhook, verifyWebhookSignature, webhoo
 export type { HandleWebhookOptions, HandleWebhookResult, VerifyWebhookSignatureInput } from './webhook.js';
 export {
   BLOCK_FACE_REASON_CODES,
+  ERASURE_REASON_CODES,
   LIST_VERIFICATIONS_STATUSES,
   TEST_VERIFICATION_OUTCOMES,
   WEBHOOK_SUBSCRIPTION_STATUSES,
@@ -51,7 +52,9 @@ export type {
   DocumentResultType,
   DocumentType,
   DuplicateCheck,
+  ErasePersonalDataPayload,
   Erasure,
+  ErasureReasonCode,
   ListVerificationsParams,
   ListVerificationsStatus,
   ManualModeration,
