@@ -71,11 +71,12 @@ Request: none.
 Response: `{ id: number, version: number, text_sha256: string, url: string }` (`version` is informational: accept consent with `id` and `text_sha256`)
 
 ### POST /verifications — `client.verifications().create(body)` → `CreatedVerification`
-Request: `{ callback_url?: url(<=2048), external_id?: string(<=255), external_metadata?: object, metadata?: object }`. `external_id` and `callback_url` are kept only when the request is signed (the client signs every request).
-Response (`201`): `{ id: string, external_id: string|null, external_metadata: object|null, redirect_url: string|null, status: string, reason: string|null, duplicate_check: DuplicateCheck, erasure: Erasure|null, consent_accepted_at: string|null, created_at: string, updated_at: string, url: string }` — `url` is the hosted session the person opens.
-Errors: `402` flat `{ code: "PAYMENT_METHOD_REQUIRED", message, free_verifications_remaining, trial_ends_at, trial_active }`; `422` `{ message, errors }`.
+Request: `{ callback_url?: url(<=2048), external_id?: string(<=255), external_metadata?: object, metadata?: object, reference_verification_id?: uuid }`. `external_id` and `callback_url` are kept only when the request is signed (the client signs every request). `reference_verification_id` makes the session a **face re-verification** (see below).
+Response (`201`): `{ id: string, external_id: string|null, external_metadata: object|null, redirect_url: string|null, status: string, reason: string|null, duplicate_check: DuplicateCheck, erasure: Erasure|null, consent_accepted_at: string|null, created_at: string, updated_at: string, reauth?: Reauth, url: string }` — `url` is the hosted session the person opens. `reauth` is present on a face re-verification only.
+Errors: `402` flat `{ code: "PAYMENT_METHOD_REQUIRED", message, free_verifications_remaining, trial_ends_at, trial_active }`; `422` `{ message, errors }`; and, only when `reference_verification_id` is sent, the refusals under *Face re-verification*.
 
 - `DuplicateCheck`: `{ checked: boolean, duplicate_count: number, duplicates: [ { verification_id: string, external_id: string|null, similarity_score: number, verified_at: string|null } ] }` — always present.
+- `Reauth`: `{ reference_verification_id: string|null, reference_verified_at: string|null, similarity: number|null }` — the `reauth` key exists on face re-verifications only; every other verification has no `reauth` key at all (check `'reauth' in v`, not `v.reauth === null`).
 - `Erasure`: `{ erased_at: string, scope: "personal_data", reason: string|null, requested_via: "customer"|"proofage"|"retention"|null }` — `null` until the verification's personal data is erased. `reason` is an erasure reason code (`data_subject_request`, `customer_request`, `retention_policy`, `test_data`, `other`) or null if unrecorded.
 
 ### GET /verifications — `client.verifications().list(params?)` → `VerificationList`
@@ -94,7 +95,15 @@ do {
 
 ### GET /verifications/{verification} — `client.verifications(id).get()` / `client.verifications().find(id)` → `Verification`
 Request: none.
-Response: same as create **without** `url` (`duplicate_check` and `erasure` included).
+Response: same as create **without** `url` (`duplicate_check` and `erasure` included; `reauth` on a face re-verification).
+
+### Face re-verification — `client.verifications().create({ reference_verification_id, ... })`
+Confirms that the person is the one who passed an earlier ID verification. Create the session with `reference_verification_id`: the `id` of an **approved, document-based verification of the same workspace** (a KYC, or an age verification done with a document; not an age estimation by selfie, not another re-verification). The person opens `url` and takes a selfie with the workspace's liveness check; no document is asked for. The selfie is compared 1:1 with the face of the reference verification and decided automatically: `approved` when it is the same person (similarity at or above a threshold, currently 0.65), `declined` with reason `reference.face.mismatch` when it is not, `declined` with `reference.unavailable` when the reference was erased or reversed in the meantime. There is no manual review of a re-verification. Liveness and anti-spoof reasons are the usual `selfie.*` ones.
+- Not billed, in live workspaces too. The request must be HMAC-signed (the client always signs). The person completes it in the hosted page only: `POST .../consent`, `.../media` and `.../submit` answer `409 REAUTH_HOSTED_ONLY` for such a session, so this SDK's headless capture methods do not apply.
+- The result is in the webhook and in `get()` / `find()` / `list()` as `reauth: { reference_verification_id, reference_verified_at, similarity }`. `reference_verified_at` is when the reference was approved. `similarity` is `null` until the faces were compared and stays `null` when liveness failed first. Nothing of the reference's document is returned: the webhook's `document` fields are all `null`, and there is no `fingerprint_signals`. Webhook subscriptions (Zapier-style) never receive re-verifications; the workspace webhook URL does.
+- In a **test** workspace nothing is analysed: the reference need not hold a face, the session goes to `review` on submit like any test session, and `setTestOutcome()` decides it. `reauth.similarity` is then fixed and illustrative: `0.9` for `approved`, `0.3` for `declined`.
+- `external_id`, `external_metadata`, `metadata` and `callback_url` work as on any session; `external_id` is yours and is not compared with the reference's.
+- Refusals when `reference_verification_id` is sent (all `{ error: { code, message } }`): `401 MISSING_SIGNATURE` (unsigned), `404 REFERENCE_VERIFICATION_NOT_FOUND` (not in this workspace; the answer is the same when it exists in another one), `422 REFERENCE_NOT_APPROVED`, `422 REFERENCE_NOT_SUPPORTED` (not a document verification), `422 REFERENCE_UNAVAILABLE` (the reference was erased, or its face data was deleted at the end of its retention period), `429 REAUTH_RATE_LIMITED` (more than 10 re-verifications of one reference in a rolling 24 hours). The 422 ones are `ValidationError`, the others `ProofAgeError`/`AuthenticationError`; read `code`. `429 REAUTH_RATE_LIMITED` is not cleared by waiting seconds, and the SDK's automatic 429 retries do not help; show it to a person or try again later.
 
 ### POST /verifications/{verification}/consent — `client.verifications(id).acceptConsent(body)` → `AcceptConsentResult`
 Request: `{ consent_version_id: number, text_sha256: string(64 hex) }`: the `id` and `text_sha256` from `getConsent()`.
@@ -162,7 +171,7 @@ Response: `204 No Content` (method resolves to `null`). Error: `404 { message: "
 - `status` (`VerificationStatus`): one of `created`, `started`, `submitted`, `resubmission_requested`, `approved`, `declined`, `abandoned`, `expired`, `review`, or `documents_required` (the last is surfaced from the latest attempt's state, not a verification status). The type is an open union: handle unknown values.
 - `reason_code` (request field on `erasePersonalData`, the `ErasureReasonCode` union / `ERASURE_REASON_CODES` array): `data_subject_request` (the verified person asked for their data to be erased), `customer_request` (you are erasing it on your own initiative), `retention_policy` (your retention window elapsed), `test_data` (a test or synthetic session), `other` (explain in `reason`, which is then required).
 - `reason_code` (request field on `blockFace`, the `BlockFaceReasonCode` union / `BLOCK_FACE_REASON_CODES` array): `presentation_attack` (spoof: screen, print or mask), `fraudulent_document` (forged, edited, or not a real document), `scam_or_abuse` (identity may be genuine — blocked for behaviour on your platform), `underage`, `other` (explain in `reason`). Optional over the API, mandatory in the ProofAge consoles: send it whenever a person made the decision, or the block cannot be told apart from an automated one in reporting.
-- `reason` (on `declined` / `resubmission_requested`): dotted codes from the server's reason catalog — illustrative examples: `aml.blocklist.face_match`, `document.face.mismatch`, `verification.age_threshold.failed`. Treat `reason` as an open string.
+- `reason` (on `declined` / `resubmission_requested`): dotted codes from the server's reason catalog — illustrative examples: `aml.blocklist.face_match`, `document.face.mismatch`, `verification.age_threshold.failed`, and on a face re-verification `reference.face.mismatch` and `reference.unavailable`. Treat `reason` as an open string.
 
 ## Outbound webhook (ProofAge → your `callback_url` / workspace webhook URL / webhook subscriptions)
 
@@ -183,6 +192,7 @@ is typed as `WebhookPayload`:
   "reason": string|null,                       // always present; a code only on resubmission_requested / declined
   "timestamp": string (ISO8601),
   "document"?: { "type"?: ..., "issuing_country"?: string|null, "fields": {...} },  // same object as document() without media; see below
+  "reauth"?: { "reference_verification_id": string|null, "reference_verified_at": string|null, "similarity": number|null },  // only on a face re-verification; its document fields are all null
   "duplicate_detected"?: true,                 // the three duplicate_* keys appear together, only when a duplicate face was found
   "duplicate_count"?: number,
   "duplicate_of"?: { "verification_id": string, "external_id": string|null },

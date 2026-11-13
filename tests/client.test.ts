@@ -102,6 +102,28 @@ describe('ProofAgeClient', () => {
     expect(v?.id).toBe('ver_123');
   });
 
+  it('creates a face re-verification: the reference is sent, signed, and the reauth block comes back', async () => {
+    const reauth = {
+      reference_verification_id: 'ver_kyc',
+      reference_verified_at: '2026-05-02T10:14:00+00:00',
+      similarity: null,
+    };
+    const spy = vi.fn(async () =>
+      Promise.resolve(new Response(JSON.stringify({ id: 'ver_re', status: 'created', reauth }), { status: 201 })),
+    );
+    vi.stubGlobal('fetch', spy);
+
+    const v = await new ProofAgeClient(baseConfig).verifications().create({
+      external_id: 'student-42',
+      reference_verification_id: 'ver_kyc',
+    });
+
+    const [, init] = fetchCall(spy);
+    expect(JSON.parse(String(init.body))).toEqual({ external_id: 'student-42', reference_verification_id: 'ver_kyc' });
+    expect((init.headers as Record<string, string>)['X-HMAC-Signature']).toBeDefined();
+    expect(v?.reauth).toEqual(reauth);
+  });
+
   it('blocks verification face', async () => {
     const spy = vi.fn(async () => Promise.resolve(new Response(null, { status: 204 })));
     vi.stubGlobal('fetch', spy);
@@ -512,6 +534,22 @@ describe('error shapes', () => {
     }
     throw new Error('expected a rejection');
   }
+
+  it('surfaces the refusals of a face re-verification by code', async () => {
+    mockFetch(404, { error: { code: 'REFERENCE_VERIFICATION_NOT_FOUND', message: 'The reference verification was not found.' } });
+    const notFound = await caught(
+      new ProofAgeClient(baseConfig).verifications().create({ reference_verification_id: 'nope' }),
+    );
+    expect(notFound.statusCode).toBe(404);
+    expect(notFound.code).toBe('REFERENCE_VERIFICATION_NOT_FOUND');
+
+    mockFetch(422, { error: { code: 'REFERENCE_NOT_APPROVED', message: 'The reference verification is not approved.' } });
+    const notApproved = await caught(
+      new ProofAgeClient(baseConfig).verifications().create({ reference_verification_id: 'x' }),
+    );
+    expect(notApproved).toBeInstanceOf(ValidationError);
+    expect(notApproved.code).toBe('REFERENCE_NOT_APPROVED');
+  });
 
   it('unwraps { error: { code, message } }', async () => {
     mockFetch(401, { error: { code: 'INVALID_SIGNATURE', message: 'HMAC signature is invalid' } });

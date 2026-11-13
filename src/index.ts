@@ -60,6 +60,7 @@ export type {
   ManualModeration,
   MediaUploadType,
   ProofAgeConfig,
+  Reauth,
   SetTestOutcomePayload,
   TestVerificationOutcome,
   UploadMediaPayload,

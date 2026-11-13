@@ -38,6 +38,17 @@ export interface CreateVerificationPayload {
   external_id?: string;
   external_metadata?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  /**
+   * Makes the session a face re-verification: the ID of an approved, document-based verification
+   * of the same workspace. The person takes a selfie only, it is compared with the face of that
+   * verification and decided on the spot. Not billed, and taken in the hosted page the returned
+   * `url` opens. The request must be signed (the client signs every request). The response and the
+   * webhooks carry a `reauth` object.
+   *
+   * A refusal throws: `404 REFERENCE_VERIFICATION_NOT_FOUND`, `422 REFERENCE_NOT_APPROVED`,
+   * `422 REFERENCE_NOT_SUPPORTED`, `422 REFERENCE_UNAVAILABLE` or `429 REAUTH_RATE_LIMITED`.
+   */
+  reference_verification_id?: string;
   /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
   fingerprint?: string;
   /** @deprecated Sent by the ProofAge widget, not part of the public API. Still accepted; will be removed in a future minor release. */
@@ -313,6 +324,23 @@ export interface Erasure {
   requested_via: string | null;
 }
 
+/**
+ * The `reauth` object of a face re-verification, in the API response and in the webhook.
+ * Ordinary verifications have no `reauth` key. Nothing of the reference's document is in it.
+ */
+export interface Reauth {
+  /** The earlier approved document verification the face was compared with; null once that verification is deleted. */
+  reference_verification_id: string | null;
+  /** When the reference verification was approved, ISO 8601. */
+  reference_verified_at: string | null;
+  /**
+   * How alike the two faces are, 0 to 1; approved when it reaches the threshold (currently 0.65).
+   * Null until the faces were compared, and for good when the liveness check failed first. In a
+   * test workspace it is fixed and illustrative: 0.9 for `approved`, 0.3 for `declined`.
+   */
+  similarity: number | null;
+}
+
 /** GET /v1/verifications/{id} */
 export interface Verification {
   id: string;
@@ -326,6 +354,8 @@ export interface Verification {
   consent_accepted_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Only on a face re-verification (created with `reference_verification_id`); absent on every other verification. */
+  reauth?: Reauth;
 }
 
 /** GET /v1/verifications: a page of verifications, newest first. */
@@ -479,6 +509,12 @@ export interface WebhookPayload {
    * `include_document_data`.
    */
   document?: VerificationDocument['document'];
+  /**
+   * Only on a face re-verification: which verification it re-checked and how alike the faces were.
+   * Its `document` fields are all null and it has no `fingerprint_signals`. Webhook subscriptions
+   * never receive a re-verification; the workspace webhook URL does.
+   */
+  reauth?: Reauth;
   /** Only on `data.updated`: the names of the `document.fields` the correction changed (names only, no values). */
   changed_fields?: string[];
   /** Only when a duplicate face was found. */

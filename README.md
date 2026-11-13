@@ -208,6 +208,23 @@ for (const media of result?.media ?? []) {
 }
 ```
 
+### Face re-verification
+
+Check that the person in front of the camera is the one who passed an earlier ID verification, with a selfie only:
+
+```typescript
+const reverification = await client.verifications().create({
+  external_id: 'student-42',
+  reference_verification_id: kycVerificationId, // an approved document verification of the same workspace
+});
+// Send the person to reverification.url; the decision arrives by webhook.
+
+// Later: webhook payload (or client.verifications().find(id)) carries the result.
+console.log(verification.reauth); // { reference_verification_id, reference_verified_at, similarity }
+```
+
+The selfie is compared 1:1 with the reference's face and decided on the spot: `approved`, or `declined` with `reference.face.mismatch` (`reference.unavailable` if the reference was erased in the meantime). It is not billed, the person takes it in the hosted page (the headless consent, media and submit calls answer `409 REAUTH_HOSTED_ONLY`), and `reauth` is on re-verifications only. Refusals throw: `404 REFERENCE_VERIFICATION_NOT_FOUND`, `422 REFERENCE_NOT_APPROVED`, `REFERENCE_NOT_SUPPORTED` or `REFERENCE_UNAVAILABLE`, and `429 REAUTH_RATE_LIMITED` (more than 10 for one reference in 24 hours; unlike `RATE_LIMIT` it does not clear within seconds, so the SDK's automatic retries do not help). See the [Face re-verification guide](https://docs.proofage.net/integration/face-reverification).
+
 ### Blocking a face
 
 ```typescript
@@ -317,7 +334,7 @@ Reads `PROOFAGE_API_KEY`, `PROOFAGE_SECRET_KEY`, and `PROOFAGE_BASE_URL` from `.
 
 - `ProofAgeError` — any API error: `statusCode`, `message`, `code` (the API's error code, e.g. `PAYMENT_METHOD_REQUIRED`, when sent), `errorData` (the parsed error detail — for a 402 it includes `free_verifications_remaining`, `trial_ends_at`, `trial_active`) and `responseBody`. Also thrown when a 2xx response is not JSON, which usually means `baseUrl` is wrong.
 - `AuthenticationError` — HTTP 401
-- `ValidationError` — HTTP 422 (`getErrors()` returns field errors; `code` is set for image rejections such as `FACE_NOT_FOUND`)
+- `ValidationError` — HTTP 422 (`getErrors()` returns field errors; `code` is set for image rejections such as `FACE_NOT_FOUND` and for a reference that cannot be re-checked, such as `REFERENCE_NOT_APPROVED`)
 - `WebhookVerificationError` — invalid or missing webhook signature / headers
 
 ## Additional Resources

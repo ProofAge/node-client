@@ -7,7 +7,7 @@ import {
   WEBHOOK_SUBSCRIPTION_STATUSES,
 } from '../src/types.js';
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import type { ConsentInfo } from '../src/types.js';
+import type { ConsentInfo, Reauth, Verification, WebhookPayload } from '../src/types.js';
 
 interface OperationContract {
   method: string;
@@ -59,7 +59,7 @@ const OPERATIONS: Record<string, OperationContract> = {
   'verifications.create': {
     method: 'POST',
     path: '/verifications',
-    request: ['callback_url', 'external_id', 'external_metadata', 'metadata'],
+    request: ['callback_url', 'external_id', 'external_metadata', 'metadata', 'reference_verification_id'],
     responseStatus: '201',
     response: [
       'id',
@@ -73,6 +73,7 @@ const OPERATIONS: Record<string, OperationContract> = {
       'consent_accepted_at',
       'created_at',
       'updated_at',
+      'reauth',
       'url',
     ],
   },
@@ -99,6 +100,7 @@ const OPERATIONS: Record<string, OperationContract> = {
       'updated_at',
       'duplicate_check',
       'erasure',
+      'reauth',
     ],
   },
   'verifications.acceptConsent': {
@@ -153,6 +155,7 @@ const OPERATIONS: Record<string, OperationContract> = {
       'updated_at',
       'duplicate_check',
       'erasure',
+      'reauth',
     ],
   },
   'verifications.blockFace': {
@@ -177,6 +180,7 @@ const OPERATIONS: Record<string, OperationContract> = {
       'updated_at',
       'duplicate_check',
       'erasure',
+      'reauth',
     ],
   },
   'webhookSubscriptions.create': {
@@ -411,5 +415,36 @@ describe('API contract drift', () => {
     const schema = spec.paths['/consent']?.get?.responses?.['200']?.content?.['application/json']?.schema;
     expect(schema?.properties?.version?.type).toBe('integer');
     expectTypeOf<ConsentInfo['version']>().toEqualTypeOf<number>();
+  });
+
+  it('types the reauth object of a face re-verification as the spec describes it', () => {
+    const reauth = responseSchema('/verifications/{verification}', 'GET')?.properties?.reauth;
+    expect(reauth?.type).toBe('object');
+    expect(sorted(Object.keys(reauth?.properties ?? {}))).toEqual(
+      sorted(['reference_verification_id', 'reference_verified_at', 'similarity']),
+    );
+    expect(responseSchema('/verifications/{verification}', 'GET')?.required).not.toContain('reauth');
+    expectTypeOf<Reauth['similarity']>().toEqualTypeOf<number | null>();
+    expectTypeOf<Verification['reauth']>().toEqualTypeOf<Reauth | undefined>();
+    expectTypeOf<WebhookPayload['reauth']>().toEqualTypeOf<Reauth | undefined>();
+  });
+
+  it('the webhook documents the reauth object with the same fields', () => {
+    const webhook = (spec as unknown as { webhooks: Record<string, Json> }).webhooks.verificationDecision.post;
+    const reauth = webhook.requestBody.content['application/json'].schema.properties.reauth;
+    expect(sorted(Object.keys(reauth.properties))).toEqual(
+      sorted(['reference_verification_id', 'reference_verified_at', 'similarity']),
+    );
+  });
+
+  it('the refusals of a face re-verification are documented on create', () => {
+    const responses = spec.paths['/verifications']?.post?.responses ?? {};
+    const codes = (status: string): string => JSON.stringify(responses[status]);
+    expect(codes('401')).toContain('MISSING_SIGNATURE');
+    expect(codes('404')).toContain('REFERENCE_VERIFICATION_NOT_FOUND');
+    for (const code of ['REFERENCE_NOT_APPROVED', 'REFERENCE_NOT_SUPPORTED', 'REFERENCE_UNAVAILABLE']) {
+      expect(codes('422')).toContain(code);
+    }
+    expect(codes('429')).toContain('REAUTH_RATE_LIMITED');
   });
 });
