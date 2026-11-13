@@ -70,6 +70,22 @@ function retryAfterMs(header: string | null): number | undefined {
   return undefined;
 }
 
+/** The longest `Retry-After` a call waits for in-process; a longer one is thrown at once. */
+const MAX_RETRY_AFTER_MS = 60_000;
+
+/**
+ * Whether a 429 is worth repeating. One that names `Retry-After` is, when the wait is within the
+ * cap. Without it, only the per-minute limiter's `RATE_LIMIT` (or a body that names no code)
+ * is: a code such as `REAUTH_RATE_LIMITED` clears over 24 hours, so a retry cannot help.
+ */
+function retryable429(retryAfter: number | undefined, text: string): boolean {
+  if (retryAfter !== undefined) {
+    return retryAfter <= MAX_RETRY_AFTER_MS;
+  }
+  const code = parseErrorBody(text).errorData?.code;
+  return code === undefined || code === 'RATE_LIMIT';
+}
+
 /**
  * Normalize the base URL to the API origin (plus any proxy path prefix), without the version.
  * A trailing `/{version}` — e.g. `https://api.proofage.net/v1` copied from the OpenAPI
@@ -349,7 +365,8 @@ export class ProofAgeClient {
    *   (DNS failure, connection refused). A 5xx, a timeout or a dropped connection may mean
    *   the server already acted (created a verification, stored an upload), so those throw.
    *
-   * A 429 waits for its `Retry-After` when the API sends one, else the linear backoff.
+   * A 429 waits for its `Retry-After` when the API sends one (more than 60 s is thrown at once),
+   * else the linear backoff; `REAUTH_RATE_LIMITED` is thrown at once, as waiting does not clear it.
    */
   private async sendWithRetry(
     method: string,
@@ -418,8 +435,10 @@ export class ProofAgeClient {
         ? res.status === 408 || res.status === 429 || (res.status >= 500 && res.status < 600)
         : res.status === 429;
 
-      if (retryableStatus && !isLastAttempt) {
-        const wait = res.status === 429 ? (retryAfterMs(res.headers.get('retry-after')) ?? backoff) : backoff;
+      const retryAfter = res.status === 429 ? retryAfterMs(res.headers.get('retry-after')) : undefined;
+
+      if (retryableStatus && !isLastAttempt && (res.status !== 429 || retryable429(retryAfter, rawText))) {
+        const wait = retryAfter ?? backoff;
         await this.delay(wait);
         continue;
       }

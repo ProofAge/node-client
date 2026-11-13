@@ -767,6 +767,51 @@ describe('retry policy', () => {
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
+  it('throws REAUTH_RATE_LIMITED at once: waiting does not clear it', async () => {
+    const spy = vi.fn(async () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: { code: 'REAUTH_RATE_LIMITED', message: 'Too many.' } }), { status: 429 }),
+      ),
+    );
+    vi.stubGlobal('fetch', spy);
+
+    const e = (await new ProofAgeClient({ ...baseConfig, retryDelay: 1 })
+      .verifications()
+      .create({ reference_verification_id: 'x' })
+      .catch((err: unknown) => err)) as ProofAgeError;
+    expect(e.statusCode).toBe(429);
+    expect(e.code).toBe('REAUTH_RATE_LIMITED');
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a 429 whose body is not JSON', async () => {
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('slow down', { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'ver_1' }), { status: 201 }));
+    vi.stubGlobal('fetch', spy);
+
+    const v = await new ProofAgeClient({ ...baseConfig, retryDelay: 1 }).verifications().create({});
+    expect(v?.id).toBe('ver_1');
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws at once on a 429 asking for more than 60 seconds', async () => {
+    const spy = vi.fn(async () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: { code: 'RATE_LIMIT' } }), { status: 429, headers: { 'Retry-After': '61' } }),
+      ),
+    );
+    vi.stubGlobal('fetch', spy);
+
+    const e = (await new ProofAgeClient({ ...baseConfig, retryDelay: 1 })
+      .verifications()
+      .create({})
+      .catch((err: unknown) => err)) as ProofAgeError;
+    expect(e.statusCode).toBe(429);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
   it('still retries a GET on a timeout', async () => {
     const spy = vi
       .fn()
