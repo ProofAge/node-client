@@ -421,10 +421,10 @@ describe('API contract drift', () => {
     const reauth = responseSchema('/verifications/{verification}', 'GET')?.properties?.reauth;
     expect(reauth?.type).toBe('object');
     expect(sorted(Object.keys(reauth?.properties ?? {}))).toEqual(
-      sorted(['reference_verification_id', 'reference_verified_at', 'similarity']),
+      sorted(['reference_verification_id', 'reference_verified_at']),
     );
     expect(responseSchema('/verifications/{verification}', 'GET')?.required).not.toContain('reauth');
-    expectTypeOf<Reauth['similarity']>().toEqualTypeOf<number | null>();
+    expectTypeOf<keyof Reauth>().toEqualTypeOf<'reference_verification_id' | 'reference_verified_at'>();
     expectTypeOf<Verification['reauth']>().toEqualTypeOf<Reauth | undefined>();
     expectTypeOf<WebhookPayload['reauth']>().toEqualTypeOf<Reauth | undefined>();
   });
@@ -433,7 +433,7 @@ describe('API contract drift', () => {
     const webhook = (spec as unknown as { webhooks: Record<string, Json> }).webhooks.verificationDecision.post;
     const reauth = webhook.requestBody.content['application/json'].schema.properties.reauth;
     expect(sorted(Object.keys(reauth.properties))).toEqual(
-      sorted(['reference_verification_id', 'reference_verified_at', 'similarity']),
+      sorted(['reference_verification_id', 'reference_verified_at']),
     );
   });
 

@@ -221,7 +221,7 @@ const reverification = await client.verifications().create({
 
 // Later: the webhook payload carries the result, and so does find().
 const result = await client.verifications().find(reverification!.id);
-console.log(result?.reauth); // { reference_verification_id, reference_verified_at, similarity }
+console.log(result?.reauth); // { reference_verification_id, reference_verified_at }
 ```
 
 The selfie is compared 1:1 with the reference's face and decided on the spot: `approved`, or `declined` with `reference.face.mismatch` (`reference.unavailable` if the reference was erased in the meantime). It is not billed, the person takes it in the hosted page (the headless consent, media and submit calls answer `409 REAUTH_HOSTED_ONLY`), and `reauth` is on re-verifications only. Refusals throw: `404 REFERENCE_VERIFICATION_NOT_FOUND`, `422 REFERENCE_NOT_APPROVED`, `REFERENCE_NOT_SUPPORTED` or `REFERENCE_UNAVAILABLE`, and `429 REAUTH_RATE_LIMITED` (more than 10 for one reference in 24 hours; unlike `RATE_LIMIT` it does not clear within seconds, so the SDK throws it at once and does not retry it). See the [Face re-verification guide](https://docs.proofage.net/integration/face-reverification).

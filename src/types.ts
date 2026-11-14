@@ -333,12 +333,6 @@ export interface Reauth {
   reference_verification_id: string | null;
   /** When the reference verification was approved, ISO 8601. */
   reference_verified_at: string | null;
-  /**
-   * How alike the two faces are, 0 to 1; approved when it reaches the threshold (currently 0.65).
-   * Null until the faces were compared, and for good when the liveness check failed first. In a
-   * test workspace it is fixed and illustrative: 0.9 for `approved`, 0.3 for `declined`.
-   */
-  similarity: number | null;
 }
 
 /** GET /v1/verifications/{id} */

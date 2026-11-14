@@ -106,7 +106,6 @@ describe('ProofAgeClient', () => {
     const reauth = {
       reference_verification_id: 'ver_kyc',
       reference_verified_at: '2026-05-02T10:14:00+00:00',
-      similarity: null,
     };
     const spy = vi.fn(async () =>
       Promise.resolve(new Response(JSON.stringify({ id: 'ver_re', status: 'created', reauth }), { status: 201 })),
