@@ -270,6 +270,11 @@ export interface WorkspaceInfo {
   verification_type: string;
   redirect_url: string | null;
   webhook_url: string | null;
+  /**
+   * Whether webhooks to `webhook_url` carry `document`, `fingerprint_signals` and
+   * `manual_moderation.performed_by`. When false, `data.updated` is not sent there either.
+   */
+  webhook_include_document_data: boolean;
   allow_expired_documents: boolean;
   allow_duplicate_accounts: boolean;
 }
@@ -499,8 +504,8 @@ export interface WebhookPayload {
    * The same object `GET /v1/verifications/{id}/document` returns (without `media`), on every decision
    * webhook. Optional on the type: a body sent before this was added, and the body of a retry after
    * the person's data was erased, parse too. After erasure a resend keeps `type` and `issuing_country`
-   * and nulls every field. Left out of a webhook subscription's deliveries unless it has
-   * `include_document_data`.
+   * and nulls every field. Left out when the workspace has `webhook_include_document_data` off,
+   * and of a webhook subscription's deliveries unless it has `include_document_data`.
    */
   document?: VerificationDocument['document'];
   /**
@@ -522,7 +527,8 @@ export interface WebhookPayload {
   };
   /**
    * Technical signals (ip_address, ip_country_code, ip_timezone, device_timezone, ...), when any were
-   * collected. Left out of a webhook subscription's deliveries unless it has `include_document_data`.
+   * collected. Left out when the workspace has `webhook_include_document_data` off, and of a webhook
+   * subscription's deliveries unless it has `include_document_data`.
    */
   fingerprint_signals?: Record<string, unknown>;
   manual_moderation?: ManualModeration;

@@ -46,6 +46,7 @@ const OPERATIONS: Record<string, OperationContract> = {
       'verification_type',
       'redirect_url',
       'webhook_url',
+      'webhook_include_document_data',
       'allow_expired_documents',
       'allow_duplicate_accounts',
     ],

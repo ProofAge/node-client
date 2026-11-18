@@ -64,7 +64,7 @@ verification, stored the upload, set the test outcome, erased the verification o
 
 ### GET /workspace — `client.workspace().get()` → `WorkspaceInfo`
 Request: none.
-Response: `{ id: string, name: string, flow_type: string, mode: string, age_mode: string|null, age_threshold: number|null, verification_type: string, redirect_url: string|null, webhook_url: string|null, allow_expired_documents: boolean, allow_duplicate_accounts: boolean }`
+Response: `{ id: string, name: string, flow_type: string, mode: string, age_mode: string|null, age_threshold: number|null, verification_type: string, redirect_url: string|null, webhook_url: string|null, webhook_include_document_data: boolean, allow_expired_documents: boolean, allow_duplicate_accounts: boolean }`. `webhook_include_document_data: false` means webhooks to `webhook_url` leave out `document`, `fingerprint_signals` and `manual_moderation.performed_by`, and no `data.updated` is sent there.
 
 ### GET /consent — `client.workspace().getConsent()` → `ConsentInfo`
 Request: none.
@@ -191,16 +191,16 @@ is typed as `WebhookPayload`:
   "external_metadata": object|null,            // always present
   "reason": string|null,                       // always present; a code only on resubmission_requested / declined
   "timestamp": string (ISO8601),
-  "document"?: { "type"?: ..., "issuing_country"?: string|null, "fields": {...} },  // same object as document() without media; see below
+  "document"?: { "type"?: ..., "issuing_country"?: string|null, "fields": {...} },  // same object as document() without media; see below. Absent when the workspace's webhook_include_document_data is false
   "reauth"?: { "reference_verification_id": string|null, "reference_verified_at": string|null },  // only on a face re-verification; its document fields are all null
   "duplicate_detected"?: true,                 // the three duplicate_* keys appear together, only when a duplicate face was found
   "duplicate_count"?: number,
   "duplicate_of"?: { "verification_id": string, "external_id": string|null },
   "changed_fields"?: string[],                 // only on data.updated: names of what the correction changed (document.fields keys, or type, issuing_country, issuing_subdivision), no values
-  "fingerprint_signals"?: object,              // ip_address, ip_country_code, ip_timezone, device_timezone, ... when collected
+  "fingerprint_signals"?: object,              // ip_address, ip_country_code, ip_timezone, device_timezone, ... when collected; absent when webhook_include_document_data is false
   "manual_moderation"?: {                      // after a console approve/decline
     "action": "approve"|"decline", "reason": string, "source": "tenant_admin"|"landlord_admin",
-    "performed_by"?: { "id": number, "name": string|null, "email": string|null, "role": string|null },  // absent on a subscription without include_document_data
+    "performed_by"?: { "id": number, "name": string|null, "email": string|null, "role": string|null },  // absent on a subscription without include_document_data, or when the workspace's webhook_include_document_data is false
     "source_status"?: string, "source_reason"?: string|null   // approve only
   }
 }
