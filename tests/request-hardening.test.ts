@@ -227,7 +227,6 @@ describe('Idempotency-Key', () => {
     for (const [status, code] of [
       [409, 'IDEMPOTENCY_KEY_REUSED'],
       [400, 'IDEMPOTENCY_KEY_INVALID'],
-      [401, 'REPLAYED_REQUEST'],
     ] as const) {
       const spy = vi.fn(async () => failure(status, { error: { code, message: 'no' } }));
       vi.stubGlobal('fetch', spy);
@@ -242,5 +241,55 @@ describe('Idempotency-Key', () => {
     vi.stubGlobal('fetch', spy);
     await expect(new ProofAgeClient(baseConfig).verifications().create({})).rejects.toThrow(ProofAgeError);
     expect(spy).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('REPLAYED_REQUEST', () => {
+  const replayed = () => failure(401, { error: { code: 'REPLAYED_REQUEST', message: 'replayed' } });
+
+  it('is resent once with a new timestamp and signature, keeping the Idempotency-Key', async () => {
+    const spy = vi.fn().mockResolvedValueOnce(replayed()).mockResolvedValueOnce(created());
+    vi.stubGlobal('fetch', spy);
+
+    // retryAttempts: 1 would not retry anything else
+    const v = await new ProofAgeClient({ ...baseConfig, retryAttempts: 1, clock: ticking() }).verifications().create({});
+
+    expect(v?.id).toBe('ver_1');
+    expect(spy).toHaveBeenCalledTimes(2);
+    const [a, b] = [headersOf(spy, 0), headersOf(spy, 1)];
+    expect(b['X-Timestamp']).not.toBe(a['X-Timestamp']);
+    expect(b['X-HMAC-Signature']).not.toBe(a['X-HMAC-Signature']);
+    expect(b['Idempotency-Key']).toBe(a['Idempotency-Key']);
+  });
+
+  it('applies to a POST without a key too', async () => {
+    const spy = vi.fn().mockResolvedValueOnce(replayed()).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', spy);
+
+    await new ProofAgeClient({ ...baseConfig, retryAttempts: 1, clock: ticking() }).verifications('v').submit();
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(headersOf(spy, 1)).not.toHaveProperty('Idempotency-Key');
+  });
+
+  it('throws a second REPLAYED_REQUEST', async () => {
+    const spy = vi.fn(async () => replayed());
+    vi.stubGlobal('fetch', spy);
+
+    const e = (await new ProofAgeClient({ ...baseConfig, clock: ticking() })
+      .verifications()
+      .create({})
+      .catch((x: unknown) => x)) as ProofAgeError;
+
+    expect(e.code).toBe('REPLAYED_REQUEST');
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('is never resent for a GET', async () => {
+    const spy = vi.fn(async () => replayed());
+    vi.stubGlobal('fetch', spy);
+
+    await expect(new ProofAgeClient({ ...baseConfig, clock: ticking() }).workspace().get()).rejects.toThrow(ProofAgeError);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });

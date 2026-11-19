@@ -73,6 +73,9 @@ function retryAfterMs(header: string | null): number | undefined {
 /** Error code of a 409 that says the first request with the same Idempotency-Key is still running. */
 const IDEMPOTENCY_IN_PROGRESS = 'IDEMPOTENCY_KEY_IN_PROGRESS';
 
+/** Error code of a 401 that says this exact signature was already used. */
+const REPLAYED_REQUEST = 'REPLAYED_REQUEST';
+
 /** What a request needs per attempt: the headers that depend on the clock, and the body. */
 type AttemptRequest = {
   headers: Record<string, string>;
@@ -436,6 +439,11 @@ export class ProofAgeClient {
    *   (DNS failure, connection refused). A 5xx, a timeout or a dropped connection may mean
    *   the server already acted (created a verification, stored an upload), so those throw.
    *
+   * A non-GET request answered `401 REPLAYED_REQUEST` was never processed (two identical requests
+   * signed in the same second collide): it waits for the next whole second of the clock, is signed
+   * again and sent once more, whatever `retryAttempts` says; that resend is not counted in it. A
+   * second `REPLAYED_REQUEST` throws.
+   *
    * Each attempt calls `prepare()` for its headers and body, so `X-Timestamp` and the signature
    * are fresh every time.
    *
@@ -451,6 +459,7 @@ export class ProofAgeClient {
     const max = Math.max(1, this.config.retryAttempts);
     const idempotent = hasIdempotencyKey || IDEMPOTENT_METHODS.has(method.toUpperCase());
     let lastError: unknown;
+    let replayResent = false;
 
     for (let attempt = 0; attempt < max; attempt++) {
       const isLastAttempt = attempt >= max - 1;
@@ -509,6 +518,22 @@ export class ProofAgeClient {
       const retryableStatus = idempotent
         ? res.status === 408 || res.status === 429 || (res.status >= 500 && res.status < 600)
         : res.status === 429;
+
+      // Two different calls with byte-identical requests signed in the same second share a
+      // signature, and the API refuses the second as a replay before processing it. So a
+      // non-GET request refused this way is signed again in the next second and sent once more.
+      // This resend does not count against retryAttempts.
+      if (
+        res.status === 401 &&
+        !IDEMPOTENT_METHODS.has(method.toUpperCase()) &&
+        !replayResent &&
+        parseErrorBody(rawText).errorData?.code === REPLAYED_REQUEST
+      ) {
+        replayResent = true;
+        await this.delay(1000 - (this.clock() % 1000));
+        attempt--;
+        continue;
+      }
 
       const inProgress =
         hasIdempotencyKey && res.status === 409 && parseErrorBody(rawText).errorData?.code === IDEMPOTENCY_IN_PROGRESS;

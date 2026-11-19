@@ -83,6 +83,10 @@ key. Other POST and DELETE requests (consent, upload, submit, block, erase, test
 on a 5xx or a timeout, where the server may already have acted. A 429 waits for the API's `Retry-After`. Media
 downloads never retry an HTTP status.
 
+A non-GET request answered `401 REPLAYED_REQUEST` (two identical requests signed in the same second share a
+signature, and the API refuses the second before processing it) is signed again in the next second and sent once
+more, whatever `retryAttempts` is; this resend is not counted in it. A second `REPLAYED_REQUEST` throws.
+
 **Timestamps and idempotency.** Every request carries `X-Timestamp` (Unix seconds), which is part of the signed
 string. The API accepts a timestamped request once, so each attempt, retries included, is stamped and signed
 again; keep the host clock accurate (the window is 300 s, `TIMESTAMP_OUT_OF_RANGE` otherwise). A create call
