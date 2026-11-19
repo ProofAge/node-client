@@ -51,3 +51,43 @@ jobs:
 
       - name: Build package
         run: npm run build
+
+  deno:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Deno is a supported runtime: Supabase Edge Functions load the package as
+    # npm:@proofage/node, and customers integrate from there. scripts/deno-smoke.sh
+    # packs the SDK and runs deno/smoke.ts against the tarball (HMAC vectors, a
+    # signed create, the webhook handler).
+    #
+    #   2.1.4  the Deno that Supabase Edge Runtime 1.77-1.79 reported in production
+    #          User-Agents (Nov 2026); raise it when Supabase moves on
+    #   v2.x   the current Deno 2 release
+    strategy:
+      fail-fast: false
+      matrix:
+        deno-version: ['2.1.4', 'v2.x']
+
+    name: Deno ${{ matrix.deno-version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ matrix.deno-version }}
+
+      - name: Deno smoke test
+        run: scripts/deno-smoke.sh
