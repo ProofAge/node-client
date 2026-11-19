@@ -11,6 +11,12 @@ function mockFetch(status: number, body: unknown) {
   );
 }
 
+/** A clock that advances one second per read, so a non-GET re-attempt never waits for a new second in real time. */
+function tickingClock(): () => number {
+  let now = 1795049078000;
+  return () => (now += 1000);
+}
+
 function fetchCall(spy: ReturnType<typeof vi.fn>, index = 0): [string, RequestInit] {
   return spy.mock.calls[index] as unknown as [string, RequestInit];
 }
@@ -700,7 +706,7 @@ describe('uploadMedia', () => {
 });
 
 describe('retry policy', () => {
-  const baseConfig = { apiKey: 'pk', secretKey: 'sk', baseUrl: 'https://api.test.com', retryAttempts: 3, retryDelay: 1 };
+  const baseConfig = { apiKey: 'pk', secretKey: 'sk', baseUrl: 'https://api.test.com', retryAttempts: 3, retryDelay: 1, clock: tickingClock() };
 
   afterEach(() => {
     vi.unstubAllGlobals();

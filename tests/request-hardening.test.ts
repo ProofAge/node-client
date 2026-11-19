@@ -8,7 +8,8 @@ import { ProofAgeError } from '../src/errors.js';
  * retries included, is stamped and signed anew; a create call carries an Idempotency-Key that
  * stays the same across its own attempts, which is what makes it safe to retry.
  */
-const baseConfig = { apiKey: 'pk', secretKey: 'sk', baseUrl: 'https://api.test.com', retryAttempts: 3, retryDelay: 1 };
+const baseConfig = { apiKey: 'pk', secretKey: 'sk', baseUrl: 'https://api.test.com', retryAttempts: 3, retryDelay: 1, clock: ticking() };
+// The shared clock ticks a second per read, so a re-attempt never has to wait for a new second in real time.
 
 const created = () => new Response(JSON.stringify({ id: 'ver_1' }), { status: 201 });
 const failure = (status: number, body: unknown = { message: 'x' }, headers: Record<string, string> = {}) =>
@@ -52,7 +53,7 @@ describe('X-Timestamp', () => {
     vi.stubGlobal('fetch', spy);
 
     const before = Math.floor(Date.now() / 1000);
-    await new ProofAgeClient(baseConfig).workspace().get();
+    await new ProofAgeClient({ ...baseConfig, clock: undefined }).workspace().get();
 
     const sent = headersOf(spy, 0)['X-Timestamp']!;
     expect(sent).toMatch(/^\d{10}$/);
