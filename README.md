@@ -83,6 +83,11 @@ key. Other POST and DELETE requests (consent, upload, submit, block, erase, test
 on a 5xx or a timeout, where the server may already have acted. A 429 waits for the API's `Retry-After`. Media
 downloads never retry an HTTP status.
 
+Before it re-attempts a non-GET request the client waits for a later whole second, so the new signature differs
+from the previous one. If the host's clock is more than 300 s off, the API answers `401 TIMESTAMP_OUT_OF_RANGE`;
+the client reads the `Date` header of that answer, remembers the offset for the life of the instance, and resends
+the request once with the corrected time (not counted in `retryAttempts`). Fix the host clock all the same.
+
 A non-GET request answered `401 REPLAYED_REQUEST` (two identical requests signed in the same second share a
 signature, and the API refuses the second before processing it) is signed again in the next second and sent once
 more, whatever `retryAttempts` is; this resend is not counted in it. A second `REPLAYED_REQUEST` throws.

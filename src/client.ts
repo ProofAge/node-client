@@ -73,11 +73,19 @@ function retryAfterMs(header: string | null): number | undefined {
 /** Error code of a 409 that says the first request with the same Idempotency-Key is still running. */
 const IDEMPOTENCY_IN_PROGRESS = 'IDEMPOTENCY_KEY_IN_PROGRESS';
 
+/** Error code of a 401 that says X-Timestamp is more than 300 s from the server's clock. */
+const TIMESTAMP_OUT_OF_RANGE = 'TIMESTAMP_OUT_OF_RANGE';
+
+/** Added to a wait for the next second, because a Node timer can fire a millisecond early. */
+const SECOND_WAIT_MARGIN_MS = 50;
+
 /** Error code of a 401 that says this exact signature was already used. */
 const REPLAYED_REQUEST = 'REPLAYED_REQUEST';
 
 /** What a request needs per attempt: the headers that depend on the clock, and the body. */
 type AttemptRequest = {
+  /** The `X-Timestamp` this attempt was signed with. */
+  timestamp: string;
   headers: Record<string, string>;
   body: BodyInit | undefined;
 };
@@ -207,6 +215,12 @@ export class ProofAgeClient {
   private readonly clock: () => number;
 
   /**
+   * Server time minus the local clock, in milliseconds, learned from the `Date` header of a
+   * `TIMESTAMP_OUT_OF_RANGE` answer and applied to every later timestamp of this client.
+   */
+  private clockOffsetMs = 0;
+
+  /**
    * `X-ProofAge-Sdk` and `User-Agent`, fixed at construction and sent on every request.
    * Neither is signed: the HMAC covers only method, path (with its query string) and body.
    */
@@ -271,7 +285,29 @@ export class ProofAgeClient {
 
   /** Current Unix time in whole seconds, as the `X-Timestamp` header carries it. */
   private timestamp(): string {
-    return String(Math.floor(this.clock() / 1000));
+    return String(this.currentSecond());
+  }
+
+  /** The (offset) clock in whole Unix seconds. */
+  private currentSecond(): number {
+    return Math.floor((this.clock() + this.clockOffsetMs) / 1000);
+  }
+
+  /**
+   * Wait until the clock is in a different whole second than `previous`, the timestamp of the
+   * attempt just made. A signature covers whole seconds, so a re-attempt of the same request in
+   * the same second would repeat it and be refused as a replay. Timers can wake a little early,
+   * so the wait carries a margin and the clock is checked again (a bounded number of times, in
+   * case a test clock does not advance).
+   */
+  private async untilNewSecond(previous: number): Promise<void> {
+    for (let i = 0; i < 10; i++) {
+      if (this.currentSecond() !== previous) {
+        return;
+      }
+      const intoSecond = (this.clock() + this.clockOffsetMs) % 1000;
+      await this.delay(1000 - intoSecond + SECOND_WAIT_MARGIN_MS);
+    }
   }
 
   /**
@@ -326,6 +362,7 @@ export class ProofAgeClient {
       prepare = () => {
         const timestamp = this.timestamp();
         return {
+          timestamp,
           headers: {
             ...baseHeaders,
             'X-Timestamp': timestamp,
@@ -362,7 +399,7 @@ export class ProofAgeClient {
         if (rawBody !== '') {
           headers['Content-Type'] = 'application/json';
         }
-        return { headers, body: rawBody === '' ? undefined : rawBody };
+        return { timestamp, headers, body: rawBody === '' ? undefined : rawBody };
       };
     }
 
@@ -460,6 +497,8 @@ export class ProofAgeClient {
     const idempotent = hasIdempotencyKey || IDEMPOTENT_METHODS.has(method.toUpperCase());
     let lastError: unknown;
     let replayResent = false;
+    let skewResent = false;
+    let previousSecond: number | undefined;
 
     for (let attempt = 0; attempt < max; attempt++) {
       const isLastAttempt = attempt >= max - 1;
@@ -467,7 +506,12 @@ export class ProofAgeClient {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.config.timeout);
 
-      const { headers, body } = prepare();
+      if (previousSecond !== undefined && !IDEMPOTENT_METHODS.has(method.toUpperCase())) {
+        // Every re-attempt of a non-GET request, whatever the reason, signs in a new second.
+        await this.untilNewSecond(previousSecond);
+      }
+      const { headers, body, timestamp } = prepare();
+      previousSecond = Number(timestamp);
       let res: Response;
       try {
         res = await fetch(url, {
@@ -530,9 +574,21 @@ export class ProofAgeClient {
         parseErrorBody(rawText).errorData?.code === REPLAYED_REQUEST
       ) {
         replayResent = true;
-        await this.delay(1000 - (this.clock() % 1000));
         attempt--;
         continue;
+      }
+
+      // The host's clock is off by more than the API's window. Learn the offset from the answer's
+      // `Date` header and send the request once more, signed with the corrected time. The
+      // rejected timestamp was never accepted, so this resend cannot collide with it.
+      if (res.status === 401 && !skewResent && parseErrorBody(rawText).errorData?.code === TIMESTAMP_OUT_OF_RANGE) {
+        const serverTime = Date.parse(res.headers.get('date') ?? '');
+        if (Number.isFinite(serverTime)) {
+          skewResent = true;
+          this.clockOffsetMs = serverTime - this.clock();
+          attempt--;
+          continue;
+        }
       }
 
       const inProgress =

@@ -94,7 +94,7 @@ describe('X-Timestamp', () => {
     expect(spy).toHaveBeenCalledTimes(2);
     const [a, b] = [headersOf(spy, 0), headersOf(spy, 1)];
     expect(a['X-Timestamp']).toBe('1795049078');
-    expect(b['X-Timestamp']).toBe('1795049079');
+    expect(Number(b['X-Timestamp'])).toBeGreaterThan(Number(a['X-Timestamp']));
     expect(a['X-HMAC-Signature']).not.toBe(b['X-HMAC-Signature']);
   });
 
@@ -291,5 +291,119 @@ describe('REPLAYED_REQUEST', () => {
 
     await expect(new ProofAgeClient({ ...baseConfig, clock: ticking() }).workspace().get()).rejects.toThrow(ProofAgeError);
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('clock skew', () => {
+  const outOfRange = (dateHeader?: string) =>
+    failure(
+      401,
+      { error: { code: 'TIMESTAMP_OUT_OF_RANGE', message: 'skewed' } },
+      dateHeader ? { Date: dateHeader } : {},
+    );
+  const local = 1795049078000;
+  const serverAhead = new Date(local + 400_000).toUTCString();
+
+  it('learns the offset from the Date header, resends once with the corrected timestamp and keeps the key', async () => {
+    const spy = vi.fn().mockResolvedValueOnce(outOfRange(serverAhead)).mockResolvedValueOnce(created());
+    vi.stubGlobal('fetch', spy);
+
+    // retryAttempts: 1: the resend is not counted
+    const v = await new ProofAgeClient({ ...baseConfig, retryAttempts: 1, clock: () => local }).verifications().create({});
+
+    expect(v?.id).toBe('ver_1');
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(headersOf(spy, 0)['X-Timestamp']).toBe('1795049078');
+    expect(headersOf(spy, 1)['X-Timestamp']).toBe('1795049478');
+    expect(headersOf(spy, 1)['Idempotency-Key']).toBe(headersOf(spy, 0)['Idempotency-Key']);
+    expect(headersOf(spy, 1)['X-HMAC-Signature']).not.toBe(headersOf(spy, 0)['X-HMAC-Signature']);
+  });
+
+  it('applies the offset to every later call of the same client, GET included', async () => {
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce(outOfRange(serverAhead))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'ws' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'ws' }), { status: 200 }));
+    vi.stubGlobal('fetch', spy);
+    const client = new ProofAgeClient({ ...baseConfig, clock: () => local });
+
+    await client.workspace().get();
+    await client.workspace().get();
+
+    expect(headersOf(spy, 1)['X-Timestamp']).toBe('1795049478');
+    expect(headersOf(spy, 2)['X-Timestamp']).toBe('1795049478');
+  });
+
+  it('throws without a Date header', async () => {
+    const spy = vi.fn(async () => outOfRange());
+    vi.stubGlobal('fetch', spy);
+
+    const e = (await new ProofAgeClient({ ...baseConfig, clock: () => local })
+      .workspace()
+      .get()
+      .catch((x: unknown) => x)) as ProofAgeError;
+
+    expect(e.code).toBe('TIMESTAMP_OUT_OF_RANGE');
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws a second TIMESTAMP_OUT_OF_RANGE after one resend', async () => {
+    const spy = vi.fn(async () => outOfRange(serverAhead));
+    vi.stubGlobal('fetch', spy);
+
+    const e = (await new ProofAgeClient({ ...baseConfig, clock: () => local })
+      .verifications()
+      .create({})
+      .catch((x: unknown) => x)) as ProofAgeError;
+
+    expect(e.code).toBe('TIMESTAMP_OUT_OF_RANGE');
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('re-attempts in a new second', () => {
+  it('signs the retry of a keyed create in a later second even with a short retryDelay', async () => {
+    const spy = vi.fn().mockResolvedValueOnce(failure(500)).mockResolvedValueOnce(created());
+    vi.stubGlobal('fetch', spy);
+
+    await new ProofAgeClient({ ...baseConfig, retryDelay: 100, clock: () => Date.now() }).verifications().create({});
+
+    expect(Number(headersOf(spy, 1)['X-Timestamp'])).toBeGreaterThan(Number(headersOf(spy, 0)['X-Timestamp']));
+    expect(headersOf(spy, 1)['X-HMAC-Signature']).not.toBe(headersOf(spy, 0)['X-HMAC-Signature']);
+  });
+
+  it('does not wait for a GET', async () => {
+    const spy = vi.fn().mockResolvedValueOnce(failure(500)).mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', spy);
+
+    const started = Date.now();
+    await new ProofAgeClient({ ...baseConfig, retryDelay: 1, clock: () => 1795049078000 }).workspace().get();
+
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(headersOf(spy, 1)['X-Timestamp']).toBe(headersOf(spy, 0)['X-Timestamp']);
+  });
+
+  it('checks the second again when a timer wakes early', async () => {
+    let now = 1795049078500;
+    const realSetTimeout = globalThis.setTimeout;
+    const waits: number[] = [];
+    // Wake up after half the requested time: the second has not changed, so the client must wait again.
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+      if (ms !== undefined && ms <= 2000) {
+        waits.push(ms);
+        now += Math.floor(ms / 2);
+        fn();
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }
+      return realSetTimeout(fn, ms);
+    }) as typeof setTimeout);
+    const spy = vi.fn().mockResolvedValueOnce(failure(500)).mockResolvedValueOnce(created());
+    vi.stubGlobal('fetch', spy);
+
+    await new ProofAgeClient({ ...baseConfig, retryDelay: 1, clock: () => now }).verifications().create({});
+
+    expect(waits.filter((ms) => ms > 1).length).toBeGreaterThan(1);
+    expect(Number(headersOf(spy, 1)['X-Timestamp'])).toBeGreaterThan(Number(headersOf(spy, 0)['X-Timestamp']));
   });
 });
