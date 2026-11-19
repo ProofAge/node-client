@@ -305,9 +305,29 @@ export class ProofAgeClient {
       if (this.currentSecond() !== previous) {
         return;
       }
-      const intoSecond = (this.clock() + this.clockOffsetMs) % 1000;
-      await this.delay(1000 - intoSecond + SECOND_WAIT_MARGIN_MS);
+      const before = this.clock();
+      await this.delay(1000 - ((before + this.clockOffsetMs) % 1000) + SECOND_WAIT_MARGIN_MS);
+      if (this.clock() === before) {
+        // The clock did not move at all (a frozen test clock): waiting again cannot help.
+        return;
+      }
     }
+  }
+
+  /**
+   * On a `401 TIMESTAMP_OUT_OF_RANGE` with a parseable `Date` header, remember the offset between
+   * the server's time and the local clock and return true: the request is worth sending once more.
+   */
+  private learnClockOffset(status: number, headers: Headers, text: string): boolean {
+    if (status !== 401 || parseErrorBody(text).errorData?.code !== TIMESTAMP_OUT_OF_RANGE) {
+      return false;
+    }
+    const serverTime = Date.parse(headers.get('date') ?? '');
+    if (!Number.isFinite(serverTime)) {
+      return false;
+    }
+    this.clockOffsetMs = serverTime - this.clock();
+    return true;
   }
 
   /**
@@ -424,43 +444,53 @@ export class ProofAgeClient {
     endpoint: string,
   ): Promise<ReadableStream<Uint8Array>> {
     const url = `${this.config.baseUrl}/${this.config.version}/${endpoint.replace(/^\//, '')}`;
-    const timestamp = this.timestamp();
-    const signature = generateHmacSignature(
-      this.config.secretKey,
-      method,
-      this.config.version,
-      endpoint,
-      '',
-      timestamp,
-    );
+    let skewResent = false;
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.config.timeout);
-
-    try {
-      const res = await fetch(url, {
+    for (;;) {
+      const timestamp = this.timestamp();
+      const signature = generateHmacSignature(
+        this.config.secretKey,
         method,
-        headers: {
-          ...this.identificationHeaders,
-          'X-API-Key': this.config.apiKey,
-          'X-Timestamp': timestamp,
-          'X-HMAC-Signature': signature,
-          Accept: DOWNLOAD_ACCEPT,
-        },
-        signal: controller.signal,
-      });
+        this.config.version,
+        endpoint,
+        '',
+        timestamp,
+      );
 
-      if (!res.ok) {
-        this.throwForParsedErrorResponse(res.status, await res.text());
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.config.timeout);
+
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: {
+            ...this.identificationHeaders,
+            'X-API-Key': this.config.apiKey,
+            'X-Timestamp': timestamp,
+            'X-HMAC-Signature': signature,
+            Accept: DOWNLOAD_ACCEPT,
+          },
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          if (!skewResent && this.learnClockOffset(res.status, res.headers, text)) {
+            // A clock more than 300 s off: resend once with the corrected time.
+            skewResent = true;
+            continue;
+          }
+          this.throwForParsedErrorResponse(res.status, text);
+        }
+
+        if (!res.body) {
+          throw new ProofAgeError('Response carried no body', res.status);
+        }
+
+        return res.body;
+      } finally {
+        clearTimeout(timer);
       }
-
-      if (!res.body) {
-        throw new ProofAgeError('Response carried no body', res.status);
-      }
-
-      return res.body;
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -503,15 +533,15 @@ export class ProofAgeClient {
     for (let attempt = 0; attempt < max; attempt++) {
       const isLastAttempt = attempt >= max - 1;
       const backoff = this.config.retryDelay * (attempt + 1);
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.config.timeout);
-
       if (previousSecond !== undefined && !IDEMPOTENT_METHODS.has(method.toUpperCase())) {
         // Every re-attempt of a non-GET request, whatever the reason, signs in a new second.
         await this.untilNewSecond(previousSecond);
       }
       const { headers, body, timestamp } = prepare();
       previousSecond = Number(timestamp);
+      // The timeout covers the request itself, not the wait for a new second above.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.config.timeout);
       let res: Response;
       try {
         res = await fetch(url, {
@@ -581,14 +611,10 @@ export class ProofAgeClient {
       // The host's clock is off by more than the API's window. Learn the offset from the answer's
       // `Date` header and send the request once more, signed with the corrected time. The
       // rejected timestamp was never accepted, so this resend cannot collide with it.
-      if (res.status === 401 && !skewResent && parseErrorBody(rawText).errorData?.code === TIMESTAMP_OUT_OF_RANGE) {
-        const serverTime = Date.parse(res.headers.get('date') ?? '');
-        if (Number.isFinite(serverTime)) {
-          skewResent = true;
-          this.clockOffsetMs = serverTime - this.clock();
-          attempt--;
-          continue;
-        }
+      if (!skewResent && this.learnClockOffset(res.status, res.headers, rawText)) {
+        skewResent = true;
+        attempt--;
+        continue;
       }
 
       const inProgress =

@@ -407,3 +407,71 @@ describe('re-attempts in a new second', () => {
     expect(Number(headersOf(spy, 1)['X-Timestamp'])).toBeGreaterThan(Number(headersOf(spy, 0)['X-Timestamp']));
   });
 });
+
+describe('downloads, timeouts and frozen clocks', () => {
+  const local = 1795049078000;
+  const skewed = () =>
+    failure(
+      401,
+      { error: { code: 'TIMESTAMP_OUT_OF_RANGE', message: 'skewed' } },
+      { Date: new Date(local + 400_000).toUTCString() },
+    );
+
+  it('corrects clock skew on a download, resends once and reuses the offset', async () => {
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce(skewed())
+      .mockResolvedValueOnce(new Response('bytes', { status: 200 }))
+      .mockResolvedValueOnce(new Response('bytes', { status: 200 }));
+    vi.stubGlobal('fetch', spy);
+    const client = new ProofAgeClient({ ...baseConfig, clock: () => local });
+
+    await client.verifications('v').downloadMedia('m');
+    await client.verifications('v').downloadMedia('m');
+
+    expect(spy).toHaveBeenCalledTimes(3);
+    expect(headersOf(spy, 0)['X-Timestamp']).toBe('1795049078');
+    expect(headersOf(spy, 1)['X-Timestamp']).toBe('1795049478');
+    expect(headersOf(spy, 2)['X-Timestamp']).toBe('1795049478');
+  });
+
+  it('throws a second TIMESTAMP_OUT_OF_RANGE on a download', async () => {
+    const spy = vi.fn(async () => skewed());
+    vi.stubGlobal('fetch', spy);
+
+    const e = (await new ProofAgeClient({ ...baseConfig, clock: () => local })
+      .verifications('v')
+      .downloadMedia('m')
+      .catch((x: unknown) => x)) as ProofAgeError;
+
+    expect(e.code).toBe('TIMESTAMP_OUT_OF_RANGE');
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not count the wait for a new second against the timeout', async () => {
+    const signals: boolean[] = [];
+    const spy = vi.fn(async (_url: string, init: RequestInit) => {
+      signals.push(init.signal!.aborted);
+      return signals.length === 1 ? failure(500) : created();
+    });
+    vi.stubGlobal('fetch', spy);
+
+    const v = await new ProofAgeClient({ ...baseConfig, timeout: 200, retryDelay: 1, clock: () => Date.now() })
+      .verifications()
+      .create({});
+
+    expect(v?.id).toBe('ver_1');
+    expect(signals).toEqual([false, false]);
+  });
+
+  it('waits once, not ten rounds, when the clock is frozen', async () => {
+    const spy = vi.fn().mockResolvedValueOnce(failure(500)).mockResolvedValueOnce(created());
+    vi.stubGlobal('fetch', spy);
+
+    const started = Date.now();
+    await new ProofAgeClient({ ...baseConfig, retryDelay: 1, clock: () => local }).verifications().create({});
+
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
