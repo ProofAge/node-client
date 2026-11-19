@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Deno smoke test for the packed @proofage/node tarball. scripts/deno-smoke.sh installs the tarball here and runs smoke.ts."
+}
