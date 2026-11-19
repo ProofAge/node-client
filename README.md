@@ -12,12 +12,23 @@ This package provides a first-class Node.js integration: auto-configuration from
 
 ## Requirements
 
-- Node.js 22+ (see `engines` in package.json)
+- Node.js 22+ (see `engines` in package.json), or Deno 2, including Supabase Edge Functions
 
 ## Installation
 
 ```bash
 npm install @proofage/node
+```
+
+On Deno and in Supabase Edge Functions, import it with the `npm:` specifier; there is nothing to install:
+
+```ts
+import { ProofAgeClient } from 'npm:@proofage/node';
+
+const client = new ProofAgeClient({
+  apiKey: Deno.env.get('PROOFAGE_API_KEY'),
+  secretKey: Deno.env.get('PROOFAGE_SECRET_KEY'),
+});
 ```
 
 ## Quick Start

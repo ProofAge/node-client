@@ -34,3 +34,12 @@ does not ship (see `files` in package.json), so maintainer notes belong here.
 `proofage/php-sdk` — the file the app also runs through its real `VerifyHmacSignature`
 middleware. Refresh it by copying when that file changes; never edit it by hand. A signing
 change here that breaks a vector breaks real requests.
+
+## Deno
+
+Deno 2 (and Supabase Edge Functions, which import `npm:@proofage/node`) is a supported runtime.
+CI's `deno` job runs `scripts/deno-smoke.sh`: it packs the package and runs `deno/smoke.ts`
+against the tarball. Keep the SDK to what Deno's Node compatibility provides (`node:crypto`,
+`Buffer`, `process.env`, global `fetch`); anything else fails that job. Without a local Deno, run
+the smoke test in Docker after building, packing and installing the tarball into `deno/`:
+`docker run --rm -v "$PWD":/repo -w /repo/deno denoland/deno:2.1.4 run --allow-net=127.0.0.1 --allow-env --allow-read smoke.ts`.
