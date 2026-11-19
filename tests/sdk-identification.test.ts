@@ -184,15 +184,20 @@ describe('X-ProofAge-Sdk and User-Agent', () => {
     expect(sentHeaders(spy)['User-Agent']).toBe(`ProofAge-Node/${packageVersion}`);
   });
 
-  it('leaves the HMAC signature untouched: METHOD + path + body only', async () => {
+  it('leaves the HMAC signature untouched: timestamp + METHOD + path + body only', async () => {
     const spy = stubFetch();
 
-    await new ProofAgeClient({ ...baseConfig, sdkTokens: ['shopify-app/1.4.0'], userAgent: 'MyShop/3.1' })
+    await new ProofAgeClient({
+      ...baseConfig,
+      clock: () => 1795049078000,
+      sdkTokens: ['shopify-app/1.4.0'],
+      userAgent: 'MyShop/3.1',
+    })
       .verifications()
       .create({ external_id: 'user-1' });
 
     const [, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
-    const expected = generateHmacSignature('test-secret-key', 'POST', 'v1', 'verifications', init.body as string);
+    const expected = generateHmacSignature('test-secret-key', 'POST', 'v1', 'verifications', init.body as string, '1795049078');
     expect(sentHeaders(spy)['X-HMAC-Signature']).toBe(expected);
   });
 });

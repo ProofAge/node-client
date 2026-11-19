@@ -210,7 +210,8 @@ type Json = any;
 
 const spec = JSON.parse(readFileSync(new URL('../openapi.json', import.meta.url), 'utf8')) as {
   paths: Record<string, Record<string, Json>>;
-  components?: { schemas?: Record<string, Json> };
+  components?: { schemas?: Record<string, Json>; securitySchemes?: Record<string, Json> };
+  security?: Json[];
 };
 
 /**
@@ -309,6 +310,24 @@ describe('API contract drift', () => {
         sorted(op.query ?? []),
       );
     }
+  });
+
+  it('only the two create calls take an Idempotency-Key header, and every call may be timestamped', () => {
+    const withKey: string[] = [];
+    for (const [path, methods] of Object.entries(spec.paths)) {
+      for (const [method, op] of Object.entries(methods)) {
+        const params: Json[] = op.parameters ?? [];
+        if (params.some((p) => p.in === 'header' && p.name === 'Idempotency-Key')) {
+          withKey.push(`${method.toUpperCase()} ${path}`);
+        }
+      }
+    }
+    expect(sorted(withKey)).toEqual(['POST /verifications', 'POST /webhook-subscriptions']);
+    expect(spec.components?.securitySchemes?.requestTimestamp).toMatchObject({ in: 'header', name: 'X-Timestamp' });
+    expect(spec.security).toEqual([
+      { apiKey: [], hmacSignature: [], requestTimestamp: [] },
+      { apiKey: [], hmacSignature: [] },
+    ]);
   });
 
   it('a listed verification has the shape find() returns', () => {

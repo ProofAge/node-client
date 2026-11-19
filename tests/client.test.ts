@@ -648,7 +648,7 @@ describe('response bodies', () => {
 });
 
 describe('uploadMedia', () => {
-  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 1 };
+  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 1, clock: () => 1795049078000 };
 
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -683,9 +683,9 @@ describe('uploadMedia', () => {
 
     // PHP, with the middleware's algorithm over those same fields:
     //   ksort($f); $q = http_build_query($f, '', '&', PHP_QUERY_RFC3986);
-    //   hash_hmac('sha256', "POST/v1/verifications/ver_123/media\n$q\n".hash('sha256', 'fake-image-bytes'), 'test-secret-key')
+    //   hash_hmac('sha256', "1795049078.POST/v1/verifications/ver_123/media\n$q\n".hash('sha256', 'fake-image-bytes'), 'test-secret-key')
     const headers = init.headers as Record<string, string>;
-    expect(headers['X-HMAC-Signature']).toBe('d04610352d2f5738d33217ac4c7395c701ee3f0c885822b625830d569f894fda');
+    expect(headers['X-HMAC-Signature']).toBe('67845e46ad34645015ca0304d7a79d6f55a3dca425dd8a3f9be60ac0932f1196');
   });
 
   it('requires side and document on a document upload at the type level', () => {
@@ -711,10 +711,10 @@ describe('retry policy', () => {
     return Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(code), { code }) });
   }
 
-  it('does not retry a POST on 5xx', async () => {
+  it('does not retry a POST without an Idempotency-Key on 5xx', async () => {
     const spy = vi.fn(async () => new Response(JSON.stringify({ error: { message: 'down' } }), { status: 503 }));
     vi.stubGlobal('fetch', spy);
-    await expect(new ProofAgeClient(baseConfig).verifications().create({})).rejects.toThrow(ProofAgeError);
+    await expect(new ProofAgeClient(baseConfig).verifications('v').submit()).rejects.toThrow(ProofAgeError);
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
@@ -727,10 +727,10 @@ describe('retry policy', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('does not retry a POST whose connection dropped mid-request', async () => {
+  it('does not retry a POST without an Idempotency-Key whose connection dropped mid-request', async () => {
     const spy = vi.fn().mockRejectedValue(networkError('ECONNRESET'));
     vi.stubGlobal('fetch', spy);
-    await expect(new ProofAgeClient(baseConfig).verifications().create({})).rejects.toThrow('fetch failed');
+    await expect(new ProofAgeClient(baseConfig).verifications('v').submit()).rejects.toThrow('fetch failed');
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
@@ -824,7 +824,7 @@ describe('retry policy', () => {
 });
 
 describe('listing verifications', () => {
-  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 1 };
+  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 1, clock: () => 1795049078000 };
 
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -871,7 +871,7 @@ describe('listing verifications', () => {
     // The server signs METHOD + path + '?' + Request::normalizeQueryString(), computed here
     // independently of the SDK's query builder.
     const expected = createHmac('sha256', 'test-secret-key')
-      .update('GET/v1/verifications?external_id=user%2042&limit=5&status=approved%2Cdeclined', 'utf8')
+      .update('1795049078.GET/v1/verifications?external_id=user%2042&limit=5&status=approved%2Cdeclined', 'utf8')
       .digest('hex');
     expect((init.headers as Record<string, string>)['X-HMAC-Signature']).toBe(expected);
   });
@@ -894,7 +894,7 @@ describe('listing verifications', () => {
     expect(result).toEqual({ data: [], next_cursor: null });
     const [url, init] = fetchCall(spy);
     expect(url).toBe('https://api.test.com/v1/verifications');
-    const expected = createHmac('sha256', 'test-secret-key').update('GET/v1/verifications', 'utf8').digest('hex');
+    const expected = createHmac('sha256', 'test-secret-key').update('1795049078.GET/v1/verifications', 'utf8').digest('hex');
     expect((init.headers as Record<string, string>)['X-HMAC-Signature']).toBe(expected);
   });
 
@@ -915,7 +915,7 @@ describe('listing verifications', () => {
 });
 
 describe('setting a test outcome', () => {
-  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 3, retryDelay: 1 };
+  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 3, retryDelay: 1, clock: () => 1795049078000 };
 
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -950,7 +950,7 @@ describe('setting a test outcome', () => {
     const body = '{"status":"resubmission_requested","reason":"Blurry photo"}';
     expect(init.body).toBe(body);
     const expected = createHmac('sha256', 'test-secret-key')
-      .update(`POST/v1/verifications/ver_1/test-outcome${body}`, 'utf8')
+      .update(`1795049078.POST/v1/verifications/ver_1/test-outcome${body}`, 'utf8')
       .digest('hex');
     expect((init.headers as Record<string, string>)['X-HMAC-Signature']).toBe(expected);
   });
@@ -1007,7 +1007,7 @@ describe('setting a test outcome', () => {
 });
 
 describe('webhook subscriptions', () => {
-  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 3, retryDelay: 1 };
+  const baseConfig = { apiKey: 'pk', secretKey: 'test-secret-key', baseUrl: 'https://api.test.com', retryAttempts: 3, retryDelay: 1, clock: () => 1795049078000 };
 
   const subscription = {
     id: '0199c4b2-7d1e-7a3f-9c0e-5b6a7c8d9e0f',
@@ -1040,7 +1040,7 @@ describe('webhook subscriptions', () => {
       '{"url":"https://hooks.zapier.com/hooks/standard/12345678/abcdef/","statuses":["approved","declined"],"include_document_data":false}';
     expect(init.body).toBe(body);
     const expected = createHmac('sha256', 'test-secret-key')
-      .update(`POST/v1/webhook-subscriptions${body}`, 'utf8')
+      .update(`1795049078.POST/v1/webhook-subscriptions${body}`, 'utf8')
       .digest('hex');
     expect((init.headers as Record<string, string>)['X-HMAC-Signature']).toBe(expected);
   });
@@ -1069,14 +1069,24 @@ describe('webhook subscriptions', () => {
     expect((error as ValidationError).code).toBe('WEBHOOK_SUBSCRIPTION_LIMIT');
   });
 
-  it('does not retry a create on 5xx: the subscription may exist', async () => {
-    const spy = vi.fn(async () => new Response(JSON.stringify({ message: 'Server Error' }), { status: 502 }));
+  it('retries a create on 5xx with the same Idempotency-Key and a fresh timestamp', async () => {
+    let now = 1795049078000;
+    const spy = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Server Error' }), { status: 502 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(subscription), { status: 201 }));
     vi.stubGlobal('fetch', spy);
 
-    await expect(new ProofAgeClient(baseConfig).webhookSubscriptions().create({ url: subscription.url })).rejects.toThrow(
-      ProofAgeError,
-    );
-    expect(spy).toHaveBeenCalledOnce();
+    const result = await new ProofAgeClient({ ...baseConfig, clock: () => (now += 1000) })
+      .webhookSubscriptions()
+      .create({ url: subscription.url });
+
+    expect(result).toEqual(subscription);
+    expect(spy).toHaveBeenCalledTimes(2);
+    const first = (fetchCall(spy, 0)[1].headers ?? {}) as Record<string, string>;
+    const second = (fetchCall(spy, 1)[1].headers ?? {}) as Record<string, string>;
+    expect(first['Idempotency-Key']).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second['Idempotency-Key']).toBe(first['Idempotency-Key']);
   });
 
   it('lists the subscriptions', async () => {
@@ -1103,7 +1113,7 @@ describe('webhook subscriptions', () => {
     expect(init.method).toBe('DELETE');
     expect(init.body).toBeUndefined();
     const expected = createHmac('sha256', 'test-secret-key')
-      .update(`DELETE/v1/webhook-subscriptions/${subscription.id}`, 'utf8')
+      .update(`1795049078.DELETE/v1/webhook-subscriptions/${subscription.id}`, 'utf8')
       .digest('hex');
     expect((init.headers as Record<string, string>)['X-HMAC-Signature']).toBe(expected);
   });

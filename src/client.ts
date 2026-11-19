@@ -70,6 +70,32 @@ function retryAfterMs(header: string | null): number | undefined {
   return undefined;
 }
 
+/** Error code of a 409 that says the first request with the same Idempotency-Key is still running. */
+const IDEMPOTENCY_IN_PROGRESS = 'IDEMPOTENCY_KEY_IN_PROGRESS';
+
+/** What a request needs per attempt: the headers that depend on the clock, and the body. */
+type AttemptRequest = {
+  headers: Record<string, string>;
+  body: BodyInit | undefined;
+};
+
+/** Options of a single `makeRequest` call. */
+export interface RequestOptions {
+  /**
+   * Sent as `Idempotency-Key`. Only the create calls (`POST /v1/verifications` and
+   * `POST /v1/webhook-subscriptions`) honour it; a request that carries one is retried like a
+   * GET, always with this same key and a fresh timestamp and signature.
+   */
+  idempotencyKey?: string;
+}
+
+/** The API accepts 1-255 printable ASCII characters (0x21-0x7E). */
+function assertValidIdempotencyKey(key: string): void {
+  if (!/^[\x21-\x7E]{1,255}$/.test(key)) {
+    throw new TypeError('idempotencyKey must be 1-255 printable ASCII characters (no spaces)');
+  }
+}
+
 /** The longest `Retry-After` a call waits for in-process; a longer one is thrown at once. */
 const MAX_RETRY_AFTER_MS = 60_000;
 
@@ -174,6 +200,9 @@ export class ProofAgeClient {
     Pick<ProofAgeConfig, 'apiKey' | 'secretKey' | 'baseUrl' | 'version' | 'timeout' | 'retryAttempts' | 'retryDelay'>
   >;
 
+  /** Milliseconds since the epoch; read on every attempt to stamp `X-Timestamp`. */
+  private readonly clock: () => number;
+
   /**
    * `X-ProofAge-Sdk` and `User-Agent`, fixed at construction and sent on every request.
    * Neither is signed: the HMAC covers only method, path (with its query string) and body.
@@ -213,6 +242,8 @@ export class ProofAgeClient {
       retryDelay: config.retryDelay ?? envInt('PROOFAGE_RETRY_DELAY') ?? 1000,
     };
 
+    this.clock = config.clock ?? Date.now;
+
     this.identificationHeaders = {
       [SDK_HEADER]: buildSdkHeader(config.sdkTokens),
       'User-Agent': resolveUserAgent(config.userAgent),
@@ -235,9 +266,18 @@ export class ProofAgeClient {
     return this.config;
   }
 
+  /** Current Unix time in whole seconds, as the `X-Timestamp` header carries it. */
+  private timestamp(): string {
+    return String(Math.floor(this.clock() / 1000));
+  }
+
   /**
    * Send a signed request. `query` is built into the URL in the API's normalised form (sorted
    * keys, RFC 3986 encoding, `null`/`undefined` dropped), and that same string is signed.
+   *
+   * Every attempt, retries included, is stamped with the current time in `X-Timestamp` and signed
+   * anew: the API accepts a timestamped request once, so a retry that reused the first
+   * signature would be refused as a replay.
    */
   async makeRequest(
     method: string,
@@ -245,32 +285,31 @@ export class ProofAgeClient {
     data: Record<string, unknown> = {},
     files: Record<string, { buffer: Buffer; filename?: string }> = {},
     query: Record<string, QueryValue> = {},
+    options: RequestOptions = {},
   ): Promise<{ status: number; json: () => Promise<unknown>; text: () => Promise<string> }> {
     endpoint = withQuery(endpoint, query);
     const url = `${this.config.baseUrl}/${this.config.version}/${endpoint.replace(/^\//, '')}`;
     const hasFiles = Object.keys(files).length > 0;
+    const idempotencyKey = options.idempotencyKey;
+    if (idempotencyKey !== undefined) {
+      assertValidIdempotencyKey(idempotencyKey);
+    }
 
-    const headers: Record<string, string> = {
+    const baseHeaders: Record<string, string> = {
       ...this.identificationHeaders,
       Accept: 'application/json',
       'X-API-Key': this.config.apiKey,
     };
+    if (idempotencyKey !== undefined) {
+      baseHeaders['Idempotency-Key'] = idempotencyKey;
+    }
 
-    let body: BodyInit | undefined;
+    let prepare: () => AttemptRequest;
 
     if (hasFiles) {
       // Sign exactly the strings that go on the wire: the server signs the fields it receives.
       const fields = toMultipartFields(data);
       const fileBuffers = Object.values(files).map((f) => f.buffer);
-      const signature = generateHmacSignatureForFiles(
-        this.config.secretKey,
-        method,
-        this.config.version,
-        endpoint,
-        fields,
-        fileBuffers,
-      );
-      headers['X-HMAC-Signature'] = signature;
 
       const form = new FormData();
       for (const [key, val] of Object.entries(fields)) {
@@ -280,25 +319,51 @@ export class ProofAgeClient {
         const name = filename ?? fieldName;
         form.append(fieldName, new Blob([new Uint8Array(buffer)]), name);
       }
-      body = form;
+
+      prepare = () => {
+        const timestamp = this.timestamp();
+        return {
+          headers: {
+            ...baseHeaders,
+            'X-Timestamp': timestamp,
+            'X-HMAC-Signature': generateHmacSignatureForFiles(
+              this.config.secretKey,
+              method,
+              this.config.version,
+              endpoint,
+              fields,
+              fileBuffers,
+              timestamp,
+            ),
+          },
+          body: form,
+        };
+      };
     } else {
       const rawBody = serializeJsonBody(data);
-      const signature = generateHmacSignature(
-        this.config.secretKey,
-        method,
-        this.config.version,
-        endpoint,
-        rawBody,
-      );
-      headers['X-HMAC-Signature'] = signature;
 
-      if (rawBody !== '') {
-        headers['Content-Type'] = 'application/json';
-        body = rawBody;
-      }
+      prepare = () => {
+        const timestamp = this.timestamp();
+        const headers: Record<string, string> = {
+          ...baseHeaders,
+          'X-Timestamp': timestamp,
+          'X-HMAC-Signature': generateHmacSignature(
+            this.config.secretKey,
+            method,
+            this.config.version,
+            endpoint,
+            rawBody,
+            timestamp,
+          ),
+        };
+        if (rawBody !== '') {
+          headers['Content-Type'] = 'application/json';
+        }
+        return { headers, body: rawBody === '' ? undefined : rawBody };
+      };
     }
 
-    return this.sendWithRetry(method, url, headers, body);
+    return this.sendWithRetry(method, url, prepare, idempotencyKey !== undefined);
   }
 
   /**
@@ -319,12 +384,14 @@ export class ProofAgeClient {
     endpoint: string,
   ): Promise<ReadableStream<Uint8Array>> {
     const url = `${this.config.baseUrl}/${this.config.version}/${endpoint.replace(/^\//, '')}`;
+    const timestamp = this.timestamp();
     const signature = generateHmacSignature(
       this.config.secretKey,
       method,
       this.config.version,
       endpoint,
       '',
+      timestamp,
     );
 
     const controller = new AbortController();
@@ -336,6 +403,7 @@ export class ProofAgeClient {
         headers: {
           ...this.identificationHeaders,
           'X-API-Key': this.config.apiKey,
+          'X-Timestamp': timestamp,
           'X-HMAC-Signature': signature,
           Accept: DOWNLOAD_ACCEPT,
         },
@@ -360,10 +428,16 @@ export class ProofAgeClient {
    * Send a request, retrying only where a repeat cannot duplicate work on the server.
    *
    * - GET/HEAD: retried on 408, 429, 5xx, timeouts and network errors.
-   * - POST (and any other non-idempotent method): retried only on 429 — the rate limiter
+   * - A POST (or other method) that carries an Idempotency-Key is safe to repeat, so it is retried
+   *   like a GET, and also on `409 IDEMPOTENCY_KEY_IN_PROGRESS` (the first attempt is still
+   *   running), honouring `Retry-After`. Every attempt sends the same key.
+   * - POST (and any other non-idempotent method) without a key: retried only on 429 — the rate limiter
    *   refuses before anything runs — and on network errors raised before the request was sent
    *   (DNS failure, connection refused). A 5xx, a timeout or a dropped connection may mean
    *   the server already acted (created a verification, stored an upload), so those throw.
+   *
+   * Each attempt calls `prepare()` for its headers and body, so `X-Timestamp` and the signature
+   * are fresh every time.
    *
    * A 429 waits for its `Retry-After` when the API sends one (more than 60 s is thrown at once),
    * else the linear backoff; `REAUTH_RATE_LIMITED` is thrown at once, as waiting does not clear it.
@@ -371,11 +445,11 @@ export class ProofAgeClient {
   private async sendWithRetry(
     method: string,
     url: string,
-    headers: Record<string, string>,
-    body: BodyInit | undefined,
+    prepare: () => AttemptRequest,
+    hasIdempotencyKey: boolean,
   ): Promise<{ status: number; json: () => Promise<unknown>; text: () => Promise<string> }> {
     const max = Math.max(1, this.config.retryAttempts);
-    const idempotent = IDEMPOTENT_METHODS.has(method.toUpperCase());
+    const idempotent = hasIdempotencyKey || IDEMPOTENT_METHODS.has(method.toUpperCase());
     let lastError: unknown;
 
     for (let attempt = 0; attempt < max; attempt++) {
@@ -384,6 +458,7 @@ export class ProofAgeClient {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.config.timeout);
 
+      const { headers, body } = prepare();
       let res: Response;
       try {
         res = await fetch(url, {
@@ -435,7 +510,16 @@ export class ProofAgeClient {
         ? res.status === 408 || res.status === 429 || (res.status >= 500 && res.status < 600)
         : res.status === 429;
 
-      const retryAfter = res.status === 429 ? retryAfterMs(res.headers.get('retry-after')) : undefined;
+      const inProgress =
+        hasIdempotencyKey && res.status === 409 && parseErrorBody(rawText).errorData?.code === IDEMPOTENCY_IN_PROGRESS;
+
+      const retryAfter =
+        res.status === 429 || inProgress ? retryAfterMs(res.headers.get('retry-after')) : undefined;
+
+      if (inProgress && !isLastAttempt && (retryAfter === undefined || retryAfter <= MAX_RETRY_AFTER_MS)) {
+        await this.delay(retryAfter ?? backoff);
+        continue;
+      }
 
       if (retryableStatus && !isLastAttempt && (res.status !== 429 || retryable429(retryAfter, rawText))) {
         const wait = retryAfter ?? backoff;
