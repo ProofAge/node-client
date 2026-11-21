@@ -1,4 +1,5 @@
 export { ProofAgeClient } from './client.js';
+export type { RequestOptions } from './client.js';
 export {
   AuthenticationError,
   ProofAgeError,
@@ -57,6 +58,7 @@ export type {
   ErasureReasonCode,
   ListVerificationsParams,
   ListVerificationsStatus,
+  CreateOptions,
   ManualModeration,
   MediaUploadType,
   ProofAgeConfig,

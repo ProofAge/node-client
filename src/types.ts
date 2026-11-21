@@ -28,6 +28,22 @@ export interface ProofAgeConfig {
    * `X-ProofAge-Sdk` is sent either way.
    */
   userAgent?: string;
+  /**
+   * Current time in milliseconds since the epoch, read on every attempt to stamp `X-Timestamp`.
+   * Defaults to `Date.now`; set it in tests for a deterministic signature.
+   */
+  clock?: () => number;
+}
+
+/** Options of a create call. */
+export interface CreateOptions {
+  /**
+   * The `Idempotency-Key` to send: 1-255 printable ASCII characters. Omit it and the SDK sends a
+   * fresh UUID v4 per call, reused by that call's own retries. Pass your own key to make a call
+   * you repeat yourself (after a crash, from a queue) create at most one resource: the same key
+   * and request within 24 hours returns the first response (`Idempotent-Replayed: true`).
+   */
+  idempotencyKey?: string;
 }
 
 /**

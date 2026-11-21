@@ -1,3 +1,4 @@
+import { newIdempotencyKey } from '../hmac.js';
 import type { ProofAgeClient } from '../client.js';
 import type {
   AcceptConsentPayload,
@@ -5,6 +6,7 @@ import type {
   AgeEstimation,
   BlockFacePayload,
   CreatedVerification,
+  CreateOptions,
   CreateVerificationPayload,
   ErasePersonalDataPayload,
   ListVerificationsParams,
@@ -21,8 +23,15 @@ export class VerificationResource {
     private readonly verificationId?: string,
   ) {}
 
-  async create(data: CreateVerificationPayload): Promise<CreatedVerification | null> {
-    const res = await this.client.makeRequest('POST', 'verifications', data as Record<string, unknown>);
+  /**
+   * Create a verification. Sends an `Idempotency-Key` (a fresh UUID v4 unless `options.idempotencyKey`
+   * is given), so the call is retried on a 5xx, a timeout or a dropped connection without creating
+   * a second verification.
+   */
+  async create(data: CreateVerificationPayload, options: CreateOptions = {}): Promise<CreatedVerification | null> {
+    const res = await this.client.makeRequest('POST', 'verifications', data as Record<string, unknown>, {}, {}, {
+      idempotencyKey: options.idempotencyKey ?? newIdempotencyKey(),
+    });
     return (await res.json()) as CreatedVerification | null;
   }
 

@@ -82,14 +82,36 @@ All options fall back to environment variables, then to defaults.
 | `retryDelay` | `PROOFAGE_RETRY_DELAY` | `1000` | Base delay between retries (ms), multiplied by the attempt number |
 | `sdkTokens` | — | `[]` | For wrapper packages: `<name>/<version>` tokens prepended to `X-ProofAge-Sdk` (see below) |
 | `userAgent` | — | `ProofAge-Node/<version> (Node <runtime>)` | Overrides the `User-Agent` header |
+| `clock` | — | `Date.now` | Milliseconds since the epoch, read on every attempt for `X-Timestamp`; set it in tests |
 
 The default moved from `https://api.proofage.xyz` to `https://api.proofage.net` in 0.14.0. The old host still answers identically (same keys, same signatures), so a `baseUrl` pinned to it keeps working.
 
-**Retries.** GET requests retry on 408, 429, 5xx, timeouts and network errors. POST and DELETE
-requests (create, consent, upload, submit, block, erase, test outcome, webhook subscriptions) retry **only** on 429 and on network errors raised
-before the request was sent (DNS failure, connection refused) — never on a 5xx or a timeout,
-where the server may already have acted, so a retry could create a second verification. A 429
-waits for the API's `Retry-After`. Media downloads never retry an HTTP status.
+**Retries.** GET requests retry on 408, 429, 5xx, timeouts and network errors. The two create calls
+(`verifications().create()` and `webhookSubscriptions().create()`) send an `Idempotency-Key`, so they retry
+the same way, and also on `409 IDEMPOTENCY_KEY_IN_PROGRESS` after its `Retry-After`; every attempt sends the same
+key. Other POST and DELETE requests (consent, upload, submit, block, erase, test outcome, subscription delete) retry
+**only** on 429 and on network errors raised before the request was sent (DNS failure, connection refused) — never
+on a 5xx or a timeout, where the server may already have acted. A 429 waits for the API's `Retry-After`. Media
+downloads never retry an HTTP status.
+
+Before it re-attempts a non-GET request the client waits for a later whole second, so the new signature differs
+from the previous one. If the host's clock is more than 300 s off, the API answers `401 TIMESTAMP_OUT_OF_RANGE`;
+the client reads the `Date` header of that answer, remembers the offset for the life of the instance, and resends
+the request once with the corrected time (not counted in `retryAttempts`). Fix the host clock all the same.
+
+A non-GET request answered `401 REPLAYED_REQUEST` (two identical requests signed in the same second share a
+signature, and the API refuses the second before processing it) is signed again in the next second and sent once
+more, whatever `retryAttempts` is; this resend is not counted in it. A second `REPLAYED_REQUEST` throws.
+
+**Timestamps and idempotency.** Every request carries `X-Timestamp` (Unix seconds), which is part of the signed
+string. The API accepts a timestamped request once, so each attempt, retries included, is stamped and signed
+again; keep the host clock accurate (the window is 300 s, `TIMESTAMP_OUT_OF_RANGE` otherwise). A create call
+generates a UUID v4 `Idempotency-Key` per call; pass your own to make a call you repeat yourself create at most
+one resource:
+
+```typescript
+await client.verifications().create({ external_id: 'order-42' }, { idempotencyKey: 'order-42-attempt' });
+```
 
 **SDK identification.** Every request carries `X-ProofAge-Sdk: node/<package version>` and
 `User-Agent: ProofAge-Node/<package version> (Node <runtime version>)`, so ProofAge support can

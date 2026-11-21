@@ -29,6 +29,20 @@ interface Vectors {
     files: Array<{ content_base64: string }>;
     expected: string;
   }>;
+  /** Each JSON and multipart vector again, signed with `X-Timestamp` (canonical = `{timestamp}.` + legacy canonical). */
+  timestamped: Array<{
+    name: string;
+    form: 'json' | 'multipart';
+    method: string;
+    path: string;
+    query?: string;
+    body?: string;
+    fields?: Record<string, unknown>;
+    files?: Array<{ content_base64: string }>;
+    timestamp: string;
+    canonical: string;
+    expected: string;
+  }>;
   webhook: Array<{ name: string; timestamp: number; payload: string; expected: string; expected_canonical?: string }>;
 }
 
@@ -65,6 +79,27 @@ describe('shared HMAC vectors', () => {
         expect(generateHmacSignatureForFiles(vectors.secret, v.method, version, endpoint, v.fields, files)).toBe(
           v.expected,
         );
+      });
+    }
+  });
+
+  describe('timestamped requests', () => {
+    expect(vectors.timestamped.length).toBeGreaterThan(0);
+    for (const v of vectors.timestamped) {
+      it(`${v.form}: ${v.name}`, () => {
+        const { version, endpoint } = splitPath(v.path);
+        if (v.form === 'json') {
+          const signed =
+            v.query === undefined ? endpoint : withQuery(endpoint, Object.fromEntries(new URLSearchParams(v.query)));
+          const body = v.body ?? '';
+          expect(`${v.timestamp}.${v.method.toUpperCase()}/${version}/${signed}${body}`).toBe(v.canonical);
+          expect(generateHmacSignature(vectors.secret, v.method, version, signed, body, v.timestamp)).toBe(v.expected);
+        } else {
+          const files = (v.files ?? []).map((f) => Buffer.from(f.content_base64, 'base64'));
+          expect(
+            generateHmacSignatureForFiles(vectors.secret, v.method, version, endpoint, v.fields ?? {}, files, v.timestamp),
+          ).toBe(v.expected);
+        }
       });
     }
   });

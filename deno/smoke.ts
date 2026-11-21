@@ -50,15 +50,18 @@ for (const vector of vectors.json) {
 check(checkedVectors > 0, 'no HMAC vector was checked');
 
 // 2. A signed create against a local stand-in for the API.
-const seen: Array<{ apiKey: string | null; sdk: string | null; signatureValid: boolean }> = [];
+const seen: Array<{ timestamped: boolean; apiKey: string | null; sdk: string | null; signatureValid: boolean }> = [];
 
 const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen: () => {} }, async (request) => {
   const url = new URL(request.url);
   const body = await request.text();
   const [, version, ...rest] = url.pathname.split('/');
-  const expected = generateHmacSignature(SECRET_KEY, request.method, version!, rest.join('/'), body);
+  // Requests carry X-Timestamp and sign over it (the legacy form when a client sends none).
+  const timestamp = request.headers.get('x-timestamp') ?? undefined;
+  const expected = generateHmacSignature(SECRET_KEY, request.method, version!, rest.join('/'), body, timestamp);
 
   seen.push({
+    timestamped: timestamp !== undefined,
     apiKey: request.headers.get('x-api-key'),
     sdk: request.headers.get('x-proofage-sdk'),
     signatureValid: request.headers.get('x-hmac-signature') === expected,
@@ -100,6 +103,7 @@ try {
   check(seen.length === 2, `expected 2 requests, the stand-in saw ${seen.length}`);
   for (const request of seen) {
     check(request.apiKey === API_KEY, 'X-API-Key is the public key');
+    check(request.timestamped, 'X-Timestamp is sent');
     check(request.signatureValid, 'X-HMAC-Signature matches the request');
     check(request.sdk?.startsWith(`node/${SDK_VERSION}`), `X-ProofAge-Sdk names node/${SDK_VERSION}`);
   }

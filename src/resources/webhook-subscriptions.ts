@@ -1,5 +1,7 @@
+import { newIdempotencyKey } from '../hmac.js';
 import type { ProofAgeClient } from '../client.js';
 import type {
+  CreateOptions,
   CreateWebhookSubscriptionPayload,
   WebhookSubscription,
   WebhookSubscriptionList,
@@ -23,10 +25,16 @@ export class WebhookSubscriptionResource {
    * and `manual_moderation.performed_by`.
    *
    * A 51st subscription throws a `ValidationError` with `code` `WEBHOOK_SUBSCRIPTION_LIMIT`.
-   * Not retried on a 5xx, which may have created the subscription.
+   * Sends an `Idempotency-Key` (a fresh UUID v4 unless `options.idempotencyKey` is given), so a
+   * 5xx, timeout or dropped connection is retried without creating a second subscription.
    */
-  async create(data: CreateWebhookSubscriptionPayload): Promise<WebhookSubscription | null> {
-    const res = await this.client.makeRequest('POST', 'webhook-subscriptions', data as unknown as Record<string, unknown>);
+  async create(
+    data: CreateWebhookSubscriptionPayload,
+    options: CreateOptions = {},
+  ): Promise<WebhookSubscription | null> {
+    const res = await this.client.makeRequest('POST', 'webhook-subscriptions', data as unknown as Record<string, unknown>, {}, {}, {
+      idempotencyKey: options.idempotencyKey ?? newIdempotencyKey(),
+    });
     return (await res.json()) as WebhookSubscription | null;
   }
 

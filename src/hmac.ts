@@ -1,4 +1,4 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 
 /**
  * Serialize request body for signing. Matches Laravel `json_encode($data)` for plain objects (ASCII payloads).
@@ -14,10 +14,18 @@ export function buildApiPath(version: string, endpoint: string): string {
   return `/${version}/${endpoint.replace(/^\//, '')}`;
 }
 
+/** The prefix a timestamped request signs: `{X-Timestamp}.`, or nothing for a legacy signature. */
+function timestampPrefix(timestamp: string | number | undefined): string {
+  return timestamp === undefined ? '' : `${timestamp}.`;
+}
+
 /**
  * HMAC for JSON/non-file requests.
  * Canonical: METHOD + path + rawJsonBody (see ProofAge Laravel client). A query string is part
  * of the path: pass `endpoint` as `withQuery(endpoint, params)` so it is already normalised.
+ *
+ * With `timestamp` (Unix seconds, the value sent in `X-Timestamp`) the canonical string is
+ * prefixed with `{timestamp}.`; without it the signature is the legacy one, unchanged.
  */
 export function generateHmacSignature(
   secretKey: string,
@@ -25,10 +33,11 @@ export function generateHmacSignature(
   version: string,
   endpoint: string,
   rawBody: string,
+  timestamp?: string | number,
 ): string {
   const m = method.toUpperCase();
   const path = buildApiPath(version, endpoint);
-  const canonicalRequest = `${m}${path}${rawBody}`;
+  const canonicalRequest = `${timestampPrefix(timestamp)}${m}${path}${rawBody}`;
   return createHmac('sha256', secretKey).update(canonicalRequest, 'utf8').digest('hex');
 }
 
@@ -170,7 +179,8 @@ export function sha256Hex(buffer: Buffer | Uint8Array): string {
 
 /**
  * HMAC for multipart (file) requests.
- * Canonical: METHOD + path + "\n" + fieldsString + "\n" + comma-sorted file hashes
+ * Canonical: METHOD + path + "\n" + fieldsString + "\n" + comma-sorted file hashes,
+ * prefixed with `{timestamp}.` when `timestamp` (the `X-Timestamp` value) is given.
  */
 export function generateHmacSignatureForFiles(
   secretKey: string,
@@ -179,11 +189,17 @@ export function generateHmacSignatureForFiles(
   endpoint: string,
   formFields: Record<string, unknown>,
   fileBuffers: Buffer[],
+  timestamp?: string | number,
 ): string {
   const m = method.toUpperCase();
   const path = buildApiPath(version, endpoint);
   const fieldsString = phpHttpBuildQueryRfc3986(canonicalizeArrayForQuery(formFields));
   const fileHashes = fileBuffers.map((b) => sha256Hex(b)).sort();
-  const canonicalRequest = `${m}${path}\n${fieldsString}\n${fileHashes.join(',')}`;
+  const canonicalRequest = `${timestampPrefix(timestamp)}${m}${path}\n${fieldsString}\n${fileHashes.join(',')}`;
   return createHmac('sha256', secretKey).update(canonicalRequest, 'utf8').digest('hex');
+}
+
+/** A fresh UUID v4: the `Idempotency-Key` a create call sends when the caller passes none. */
+export function newIdempotencyKey(): string {
+  return randomUUID();
 }

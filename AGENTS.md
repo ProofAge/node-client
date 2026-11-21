@@ -6,7 +6,7 @@ This package wraps the ProofAge v1 HTTP API. Methods on `client.workspace()`,
 (authoritative for endpoints and request bodies; it describes most response bodies too, and
 where it does not, the response interfaces below are authoritative).
 
-All requests send `X-API-Key` and `X-HMAC-Signature`. Request bodies use **snake_case** to
+All requests send `X-API-Key`, `X-Timestamp` and `X-HMAC-Signature`. Request bodies use **snake_case** to
 match the API. A single object is never wrapped in `data`; the list endpoints answer
 `{ data: [...] }` (plus `next_cursor` on `GET /verifications`).
 
@@ -38,7 +38,7 @@ The API uses four error body shapes; the client reads all of them:
 A 2xx response with an empty body resolves to `null`; a non-empty 2xx body that is not JSON
 throws `ProofAgeError` (almost always a `baseUrl` pointing at a website rather than the API).
 
-Retries: GETs retry on 408, 429, 5xx, timeouts and network errors. POSTs and DELETEs retry
+Retries: GETs retry on 408, 429, 5xx, timeouts and network errors. A create call (`verifications().create()`, `webhookSubscriptions().create()`) carries an `Idempotency-Key`, so it is retried like a GET, and also on `409 IDEMPOTENCY_KEY_IN_PROGRESS` (waits for `Retry-After`, which is 1 s): every attempt sends the same key and a fresh `X-Timestamp` and signature. Before any re-attempt of a non-GET/HEAD request the client waits until its clock is in a later whole second than the previous attempt's `X-Timestamp` (a signature covers whole seconds, and a repeated one is refused as `REPLAYED_REQUEST`). On `401 TIMESTAMP_OUT_OF_RANGE` (any method, media downloads included) with a parseable `Date` header, the client stores the offset between the server's time and its own clock for the life of the instance, applies it to every later `X-Timestamp`, and resends that request once, same `Idempotency-Key`, not counted in `retryAttempts`; without a `Date` header, or on a second `TIMESTAMP_OUT_OF_RANGE`, it throws. Any non-GET request answered `401 REPLAYED_REQUEST` (two identical requests signed in the same second share a signature; the server refuses the second before processing it) waits for the next whole second, is signed again and sent once more with the same `Idempotency-Key`, even with `retryAttempts: 1`; that resend is not counted in `retryAttempts`, and a second `REPLAYED_REQUEST` throws. Other POSTs and DELETEs retry
 **only** on 429 and on network errors raised before the request was sent (DNS failure,
 connection refused) — never on 5xx or timeouts, where the server may already have created the
 verification, stored the upload, set the test outcome, erased the verification or created/deleted the subscription. A 429 waits for `Retry-After` when present (more than 60 s is thrown at once), else `retryDelay × attempt`; a 429 that names a code other than `RATE_LIMIT` (`REAUTH_RATE_LIMITED`) is thrown at once.
@@ -46,6 +46,16 @@ verification, stored the upload, set the test outcome, erased the verification o
 ## Auth / HMAC
 
 - `X-API-Key`: workspace API key (plaintext; the server SHA256-hashes it).
+- `X-Timestamp`: current Unix time in seconds, sent on every request and signed as a prefix of the
+  canonical string below: `{X-Timestamp}.` + canonical. The server accepts it within 300 s of its
+  clock and accepts a timestamped request other than GET/HEAD **once**, so the client stamps and
+  signs again on every attempt, retries included (a signature is never reused). Errors (all
+  `AuthenticationError`, 401): `TIMESTAMP_OUT_OF_RANGE` (not Unix seconds, or more than 300 s from
+  the server's clock: fix the host's clock), `REPLAYED_REQUEST` (the same signature was already
+  used), `TIMESTAMP_REQUIRED` (the workspace requires `X-Timestamp`; the SDK always sends it). The
+  `clock` option (`() => milliseconds`) replaces `Date.now` for tests. `generateHmacSignature()` and
+  `generateHmacSignatureForFiles()` take the timestamp as an optional last argument; without it they
+  produce the legacy signature.
 - `X-HMAC-Signature`: hex HMAC-SHA256 with the workspace secret key over a canonical string:
   - JSON / no-file requests: `METHOD + /{version}/{path} + rawJsonBody` (direct concatenation, no delimiter).
     A query string is part of the path: `METHOD/{version}/{path}?{query} + rawJsonBody`, where `{query}` is
@@ -71,6 +81,7 @@ Request: none.
 Response: `{ id: number, version: number, text_sha256: string, url: string }` (`version` is informational: accept consent with `id` and `text_sha256`)
 
 ### POST /verifications — `client.verifications().create(body)` → `CreatedVerification`
+Idempotent: the call sends an `Idempotency-Key` header, a fresh UUID v4 unless you pass `create(body, { idempotencyKey })` (1-255 printable ASCII characters, no spaces; others throw `TypeError` before sending). The same key and the same request within 24 hours returns the first response (`Idempotent-Replayed: true`) instead of creating a second verification, so a retry after a 5xx, a timeout or a dropped connection is safe. Errors: `400 IDEMPOTENCY_KEY_INVALID`; `409 IDEMPOTENCY_KEY_REUSED` (same key, different request); `409 IDEMPOTENCY_KEY_IN_PROGRESS` (the first call is still running, `Retry-After: 1`; the SDK waits and retries it). Only responses below 500 are stored. Pass your own key when you repeat a call yourself (a job that may run twice) and keep it with the job.
 Request: `{ callback_url?: url(<=2048), external_id?: string(<=255), external_metadata?: object, metadata?: object, reference_verification_id?: uuid }`. `external_id` and `callback_url` are kept only when the request is signed (the client signs every request). `reference_verification_id` makes the session a **face re-verification** (see below).
 Response (`201`): `{ id: string, external_id: string|null, external_metadata: object|null, redirect_url: string|null, status: string, reason: string|null, duplicate_check: DuplicateCheck, erasure: Erasure|null, consent_accepted_at: string|null, created_at: string, updated_at: string, reauth?: Reauth, url: string }` — `url` is the hosted session the person opens. `reauth` is present on a face re-verification only.
 Errors: `402` flat `{ code: "PAYMENT_METHOD_REQUIRED", message, free_verifications_remaining, trial_ends_at, trial_active }`; `422` `{ message, errors }`; and, only when `reference_verification_id` is sent, the refusals under *Face re-verification*.
@@ -146,7 +157,7 @@ Only `approved`, `declined`, `abandoned` and `expired` verifications can be eras
 **Test workspaces only.** Finishes the verification with `status` without a person going through the widget, so an integration's handling of each outcome can be tested end to end. A verification nobody has opened is moved through `started` and `submitted` first, so the outcome is the only decision webhooks are sent for. Works from `created`, `started`, `submitted`, `review` and `resubmission_requested`.
 Request (`SetTestOutcomePayload`): `{ status: "approved"|"declined"|"review"|"resubmission_requested" (TEST_VERIFICATION_OUTCOMES), reason?: string(<=1000)|null }`. `reason` is a note kept with a `resubmission_requested` outcome in the verification's history, not the decision `reason` code.
 Response: the verification, same shape as `GET /verifications/{verification}`.
-Errors: `403 { error: { code: "TEST_WORKSPACE_ONLY", message } }` in a live workspace (`ProofAgeError`); `403 { message }` for a verification of another workspace; `422 { error: { code: "INVALID_STATUS", message } }` when the verification is already final (`ValidationError`); `422 { message, errors }` for an invalid field. Not retried on a 5xx.
+Errors: `403 { error: { code: "TEST_WORKSPACE_ONLY", message } }` in a live workspace (`ProofAgeError`); `403 { message }` for a verification of another workspace; `422 { error: { code: "INVALID_STATUS", message } }` when the verification is already final (`ValidationError`); `422 { message, errors }` for an invalid field. Idempotent like `POST /verifications`: `create(body, { idempotencyKey })`, a fresh UUID v4 key when none is given, retried on a 5xx, a timeout or a dropped connection with the same key; `400 IDEMPOTENCY_KEY_INVALID`, `409 IDEMPOTENCY_KEY_REUSED`, `409 IDEMPOTENCY_KEY_IN_PROGRESS` as above.
 
 ### POST /webhook-subscriptions — `client.webhookSubscriptions().create(body)` → `WebhookSubscription`
 Subscribes a URL to the decision webhooks, in addition to the workspace webhook URL set in the console (REST hooks, e.g. Zapier: subscribe when an automation is turned on, delete when it is turned off). A workspace can have up to 50.

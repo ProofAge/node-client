@@ -70,6 +70,43 @@ function retryAfterMs(header: string | null): number | undefined {
   return undefined;
 }
 
+/** Error code of a 409 that says the first request with the same Idempotency-Key is still running. */
+const IDEMPOTENCY_IN_PROGRESS = 'IDEMPOTENCY_KEY_IN_PROGRESS';
+
+/** Error code of a 401 that says X-Timestamp is more than 300 s from the server's clock. */
+const TIMESTAMP_OUT_OF_RANGE = 'TIMESTAMP_OUT_OF_RANGE';
+
+/** Added to a wait for the next second, because a Node timer can fire a millisecond early. */
+const SECOND_WAIT_MARGIN_MS = 50;
+
+/** Error code of a 401 that says this exact signature was already used. */
+const REPLAYED_REQUEST = 'REPLAYED_REQUEST';
+
+/** What a request needs per attempt: the headers that depend on the clock, and the body. */
+type AttemptRequest = {
+  /** The `X-Timestamp` this attempt was signed with. */
+  timestamp: string;
+  headers: Record<string, string>;
+  body: BodyInit | undefined;
+};
+
+/** Options of a single `makeRequest` call. */
+export interface RequestOptions {
+  /**
+   * Sent as `Idempotency-Key`. Only the create calls (`POST /v1/verifications` and
+   * `POST /v1/webhook-subscriptions`) honour it; a request that carries one is retried like a
+   * GET, always with this same key and a fresh timestamp and signature.
+   */
+  idempotencyKey?: string;
+}
+
+/** The API accepts 1-255 printable ASCII characters (0x21-0x7E). */
+function assertValidIdempotencyKey(key: string): void {
+  if (!/^[\x21-\x7E]{1,255}$/.test(key)) {
+    throw new TypeError('idempotencyKey must be 1-255 printable ASCII characters (no spaces)');
+  }
+}
+
 /** The longest `Retry-After` a call waits for in-process; a longer one is thrown at once. */
 const MAX_RETRY_AFTER_MS = 60_000;
 
@@ -174,6 +211,15 @@ export class ProofAgeClient {
     Pick<ProofAgeConfig, 'apiKey' | 'secretKey' | 'baseUrl' | 'version' | 'timeout' | 'retryAttempts' | 'retryDelay'>
   >;
 
+  /** Milliseconds since the epoch; read on every attempt to stamp `X-Timestamp`. */
+  private readonly clock: () => number;
+
+  /**
+   * Server time minus the local clock, in milliseconds, learned from the `Date` header of a
+   * `TIMESTAMP_OUT_OF_RANGE` answer and applied to every later timestamp of this client.
+   */
+  private clockOffsetMs = 0;
+
   /**
    * `X-ProofAge-Sdk` and `User-Agent`, fixed at construction and sent on every request.
    * Neither is signed: the HMAC covers only method, path (with its query string) and body.
@@ -213,6 +259,8 @@ export class ProofAgeClient {
       retryDelay: config.retryDelay ?? envInt('PROOFAGE_RETRY_DELAY') ?? 1000,
     };
 
+    this.clock = config.clock ?? Date.now;
+
     this.identificationHeaders = {
       [SDK_HEADER]: buildSdkHeader(config.sdkTokens),
       'User-Agent': resolveUserAgent(config.userAgent),
@@ -235,9 +283,60 @@ export class ProofAgeClient {
     return this.config;
   }
 
+  /** Current Unix time in whole seconds, as the `X-Timestamp` header carries it. */
+  private timestamp(): string {
+    return String(this.currentSecond());
+  }
+
+  /** The (offset) clock in whole Unix seconds. */
+  private currentSecond(): number {
+    return Math.floor((this.clock() + this.clockOffsetMs) / 1000);
+  }
+
+  /**
+   * Wait until the clock is in a different whole second than `previous`, the timestamp of the
+   * attempt just made. A signature covers whole seconds, so a re-attempt of the same request in
+   * the same second would repeat it and be refused as a replay. Timers can wake a little early,
+   * so the wait carries a margin and the clock is checked again (a bounded number of times, in
+   * case a test clock does not advance).
+   */
+  private async untilNewSecond(previous: number): Promise<void> {
+    for (let i = 0; i < 10; i++) {
+      if (this.currentSecond() !== previous) {
+        return;
+      }
+      const before = this.clock();
+      await this.delay(1000 - ((before + this.clockOffsetMs) % 1000) + SECOND_WAIT_MARGIN_MS);
+      if (this.clock() === before) {
+        // The clock did not move at all (a frozen test clock): waiting again cannot help.
+        return;
+      }
+    }
+  }
+
+  /**
+   * On a `401 TIMESTAMP_OUT_OF_RANGE` with a parseable `Date` header, remember the offset between
+   * the server's time and the local clock and return true: the request is worth sending once more.
+   */
+  private learnClockOffset(status: number, headers: Headers, text: string): boolean {
+    if (status !== 401 || parseErrorBody(text).errorData?.code !== TIMESTAMP_OUT_OF_RANGE) {
+      return false;
+    }
+    const serverTime = Date.parse(headers.get('date') ?? '');
+    if (!Number.isFinite(serverTime)) {
+      return false;
+    }
+    this.clockOffsetMs = serverTime - this.clock();
+    return true;
+  }
+
   /**
    * Send a signed request. `query` is built into the URL in the API's normalised form (sorted
    * keys, RFC 3986 encoding, `null`/`undefined` dropped), and that same string is signed.
+   *
+   * Every attempt, retries included, is stamped with the current time in `X-Timestamp` and signed
+   * anew: the API accepts a timestamped request once, so a retry that reused the first
+   * signature would be refused as a replay.
    */
   async makeRequest(
     method: string,
@@ -245,32 +344,31 @@ export class ProofAgeClient {
     data: Record<string, unknown> = {},
     files: Record<string, { buffer: Buffer; filename?: string }> = {},
     query: Record<string, QueryValue> = {},
+    options: RequestOptions = {},
   ): Promise<{ status: number; json: () => Promise<unknown>; text: () => Promise<string> }> {
     endpoint = withQuery(endpoint, query);
     const url = `${this.config.baseUrl}/${this.config.version}/${endpoint.replace(/^\//, '')}`;
     const hasFiles = Object.keys(files).length > 0;
+    const idempotencyKey = options.idempotencyKey;
+    if (idempotencyKey !== undefined) {
+      assertValidIdempotencyKey(idempotencyKey);
+    }
 
-    const headers: Record<string, string> = {
+    const baseHeaders: Record<string, string> = {
       ...this.identificationHeaders,
       Accept: 'application/json',
       'X-API-Key': this.config.apiKey,
     };
+    if (idempotencyKey !== undefined) {
+      baseHeaders['Idempotency-Key'] = idempotencyKey;
+    }
 
-    let body: BodyInit | undefined;
+    let prepare: () => AttemptRequest;
 
     if (hasFiles) {
       // Sign exactly the strings that go on the wire: the server signs the fields it receives.
       const fields = toMultipartFields(data);
       const fileBuffers = Object.values(files).map((f) => f.buffer);
-      const signature = generateHmacSignatureForFiles(
-        this.config.secretKey,
-        method,
-        this.config.version,
-        endpoint,
-        fields,
-        fileBuffers,
-      );
-      headers['X-HMAC-Signature'] = signature;
 
       const form = new FormData();
       for (const [key, val] of Object.entries(fields)) {
@@ -280,25 +378,52 @@ export class ProofAgeClient {
         const name = filename ?? fieldName;
         form.append(fieldName, new Blob([new Uint8Array(buffer)]), name);
       }
-      body = form;
+
+      prepare = () => {
+        const timestamp = this.timestamp();
+        return {
+          timestamp,
+          headers: {
+            ...baseHeaders,
+            'X-Timestamp': timestamp,
+            'X-HMAC-Signature': generateHmacSignatureForFiles(
+              this.config.secretKey,
+              method,
+              this.config.version,
+              endpoint,
+              fields,
+              fileBuffers,
+              timestamp,
+            ),
+          },
+          body: form,
+        };
+      };
     } else {
       const rawBody = serializeJsonBody(data);
-      const signature = generateHmacSignature(
-        this.config.secretKey,
-        method,
-        this.config.version,
-        endpoint,
-        rawBody,
-      );
-      headers['X-HMAC-Signature'] = signature;
 
-      if (rawBody !== '') {
-        headers['Content-Type'] = 'application/json';
-        body = rawBody;
-      }
+      prepare = () => {
+        const timestamp = this.timestamp();
+        const headers: Record<string, string> = {
+          ...baseHeaders,
+          'X-Timestamp': timestamp,
+          'X-HMAC-Signature': generateHmacSignature(
+            this.config.secretKey,
+            method,
+            this.config.version,
+            endpoint,
+            rawBody,
+            timestamp,
+          ),
+        };
+        if (rawBody !== '') {
+          headers['Content-Type'] = 'application/json';
+        }
+        return { timestamp, headers, body: rawBody === '' ? undefined : rawBody };
+      };
     }
 
-    return this.sendWithRetry(method, url, headers, body);
+    return this.sendWithRetry(method, url, prepare, idempotencyKey !== undefined);
   }
 
   /**
@@ -319,40 +444,53 @@ export class ProofAgeClient {
     endpoint: string,
   ): Promise<ReadableStream<Uint8Array>> {
     const url = `${this.config.baseUrl}/${this.config.version}/${endpoint.replace(/^\//, '')}`;
-    const signature = generateHmacSignature(
-      this.config.secretKey,
-      method,
-      this.config.version,
-      endpoint,
-      '',
-    );
+    let skewResent = false;
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.config.timeout);
-
-    try {
-      const res = await fetch(url, {
+    for (;;) {
+      const timestamp = this.timestamp();
+      const signature = generateHmacSignature(
+        this.config.secretKey,
         method,
-        headers: {
-          ...this.identificationHeaders,
-          'X-API-Key': this.config.apiKey,
-          'X-HMAC-Signature': signature,
-          Accept: DOWNLOAD_ACCEPT,
-        },
-        signal: controller.signal,
-      });
+        this.config.version,
+        endpoint,
+        '',
+        timestamp,
+      );
 
-      if (!res.ok) {
-        this.throwForParsedErrorResponse(res.status, await res.text());
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.config.timeout);
+
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: {
+            ...this.identificationHeaders,
+            'X-API-Key': this.config.apiKey,
+            'X-Timestamp': timestamp,
+            'X-HMAC-Signature': signature,
+            Accept: DOWNLOAD_ACCEPT,
+          },
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          if (!skewResent && this.learnClockOffset(res.status, res.headers, text)) {
+            // A clock more than 300 s off: resend once with the corrected time.
+            skewResent = true;
+            continue;
+          }
+          this.throwForParsedErrorResponse(res.status, text);
+        }
+
+        if (!res.body) {
+          throw new ProofAgeError('Response carried no body', res.status);
+        }
+
+        return res.body;
+      } finally {
+        clearTimeout(timer);
       }
-
-      if (!res.body) {
-        throw new ProofAgeError('Response carried no body', res.status);
-      }
-
-      return res.body;
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -360,10 +498,21 @@ export class ProofAgeClient {
    * Send a request, retrying only where a repeat cannot duplicate work on the server.
    *
    * - GET/HEAD: retried on 408, 429, 5xx, timeouts and network errors.
-   * - POST (and any other non-idempotent method): retried only on 429 — the rate limiter
+   * - A POST (or other method) that carries an Idempotency-Key is safe to repeat, so it is retried
+   *   like a GET, and also on `409 IDEMPOTENCY_KEY_IN_PROGRESS` (the first attempt is still
+   *   running), honouring `Retry-After`. Every attempt sends the same key.
+   * - POST (and any other non-idempotent method) without a key: retried only on 429 — the rate limiter
    *   refuses before anything runs — and on network errors raised before the request was sent
    *   (DNS failure, connection refused). A 5xx, a timeout or a dropped connection may mean
    *   the server already acted (created a verification, stored an upload), so those throw.
+   *
+   * A non-GET request answered `401 REPLAYED_REQUEST` was never processed (two identical requests
+   * signed in the same second collide): it waits for the next whole second of the clock, is signed
+   * again and sent once more, whatever `retryAttempts` says; that resend is not counted in it. A
+   * second `REPLAYED_REQUEST` throws.
+   *
+   * Each attempt calls `prepare()` for its headers and body, so `X-Timestamp` and the signature
+   * are fresh every time.
    *
    * A 429 waits for its `Retry-After` when the API sends one (more than 60 s is thrown at once),
    * else the linear backoff; `REAUTH_RATE_LIMITED` is thrown at once, as waiting does not clear it.
@@ -371,19 +520,28 @@ export class ProofAgeClient {
   private async sendWithRetry(
     method: string,
     url: string,
-    headers: Record<string, string>,
-    body: BodyInit | undefined,
+    prepare: () => AttemptRequest,
+    hasIdempotencyKey: boolean,
   ): Promise<{ status: number; json: () => Promise<unknown>; text: () => Promise<string> }> {
     const max = Math.max(1, this.config.retryAttempts);
-    const idempotent = IDEMPOTENT_METHODS.has(method.toUpperCase());
+    const idempotent = hasIdempotencyKey || IDEMPOTENT_METHODS.has(method.toUpperCase());
     let lastError: unknown;
+    let replayResent = false;
+    let skewResent = false;
+    let previousSecond: number | undefined;
 
     for (let attempt = 0; attempt < max; attempt++) {
       const isLastAttempt = attempt >= max - 1;
       const backoff = this.config.retryDelay * (attempt + 1);
+      if (previousSecond !== undefined && !IDEMPOTENT_METHODS.has(method.toUpperCase())) {
+        // Every re-attempt of a non-GET request, whatever the reason, signs in a new second.
+        await this.untilNewSecond(previousSecond);
+      }
+      const { headers, body, timestamp } = prepare();
+      previousSecond = Number(timestamp);
+      // The timeout covers the request itself, not the wait for a new second above.
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.config.timeout);
-
       let res: Response;
       try {
         res = await fetch(url, {
@@ -435,7 +593,40 @@ export class ProofAgeClient {
         ? res.status === 408 || res.status === 429 || (res.status >= 500 && res.status < 600)
         : res.status === 429;
 
-      const retryAfter = res.status === 429 ? retryAfterMs(res.headers.get('retry-after')) : undefined;
+      // Two different calls with byte-identical requests signed in the same second share a
+      // signature, and the API refuses the second as a replay before processing it. So a
+      // non-GET request refused this way is signed again in the next second and sent once more.
+      // This resend does not count against retryAttempts.
+      if (
+        res.status === 401 &&
+        !IDEMPOTENT_METHODS.has(method.toUpperCase()) &&
+        !replayResent &&
+        parseErrorBody(rawText).errorData?.code === REPLAYED_REQUEST
+      ) {
+        replayResent = true;
+        attempt--;
+        continue;
+      }
+
+      // The host's clock is off by more than the API's window. Learn the offset from the answer's
+      // `Date` header and send the request once more, signed with the corrected time. The
+      // rejected timestamp was never accepted, so this resend cannot collide with it.
+      if (!skewResent && this.learnClockOffset(res.status, res.headers, rawText)) {
+        skewResent = true;
+        attempt--;
+        continue;
+      }
+
+      const inProgress =
+        hasIdempotencyKey && res.status === 409 && parseErrorBody(rawText).errorData?.code === IDEMPOTENCY_IN_PROGRESS;
+
+      const retryAfter =
+        res.status === 429 || inProgress ? retryAfterMs(res.headers.get('retry-after')) : undefined;
+
+      if (inProgress && !isLastAttempt && (retryAfter === undefined || retryAfter <= MAX_RETRY_AFTER_MS)) {
+        await this.delay(retryAfter ?? backoff);
+        continue;
+      }
 
       if (retryableStatus && !isLastAttempt && (res.status !== 429 || retryable429(retryAfter, rawText))) {
         const wait = retryAfter ?? backoff;
